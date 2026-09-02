@@ -1,12 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, Search, Filter, Pencil, Trash2, X,
   Utensils, Car, ShoppingBag, Receipt, Film, 
   HeartPulse, GraduationCap, MoreHorizontal,
-  CreditCard, Calendar, Hash, ChevronDown
+  CreditCard, Calendar, Hash, ChevronDown, RefreshCw
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
-// --- Constants & Mock Data ---
+// --- Constants ---
 
 const CATEGORY_ICONS = {
   'Food & Dining': Utensils,
@@ -21,20 +23,10 @@ const CATEGORY_ICONS = {
 
 const CATEGORIES = Object.keys(CATEGORY_ICONS);
 
-const INITIAL_EXPENSES = [
-  { id: '1', date: '2025-05-30', name: 'Dinner', category: 'Food & Dining', amount: 650, notes: '' },
-  { id: '2', date: '2025-05-29', name: 'Taxi', category: 'Travel', amount: 350, notes: '' },
-  { id: '3', date: '2025-05-27', name: 'Online Shopping', category: 'Shopping', amount: 2500, notes: '' },
-  { id: '4', date: '2025-05-25', name: 'Electricity Bill', category: 'Bills & Utilities', amount: 1800, notes: '' },
-  { id: '5', date: '2025-05-22', name: 'Movie', category: 'Entertainment', amount: 500, notes: '' },
-  { id: '6', date: '2025-05-20', name: 'Doctor Visit', category: 'Health', amount: 1200, notes: '' },
-  { id: '7', date: '2025-05-18', name: 'Course Fee', category: 'Education', amount: 3000, notes: '' },
-  { id: '8', date: '2025-05-15', name: 'Miscellaneous', category: 'Other', amount: 750, notes: '' },
-];
-
 // --- Helper Functions ---
 
 const formatDateDisplay = (dateString) => {
+  if (!dateString) return '';
   const options = { day: '2-digit', month: 'short', year: 'numeric' };
   const date = new Date(dateString);
   // Using UTC to avoid timezone shifts changing the displayed date from the input string
@@ -42,16 +34,19 @@ const formatDateDisplay = (dateString) => {
 };
 
 const formatCurrency = (amount) => {
+  if (amount === undefined || amount === null) return '₹0';
   return '₹' + Number(amount).toLocaleString('en-IN');
 };
 
 const isCurrentMonth = (dateString) => {
+  if (!dateString) return false;
   const date = new Date(dateString);
   const now = new Date();
   return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
 };
 
 const isLastMonth = (dateString) => {
+  if (!dateString) return false;
   const date = new Date(dateString);
   const now = new Date();
   const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -71,8 +66,13 @@ const SummaryCard = ({ title, amount, Icon }) => (
 );
 
 const Expenses = () => {
+  // Auth Context
+  const { user } = useAuth();
+
   // State
-  const [expenses, setExpenses] = useState(INITIAL_EXPENSES);
+  const [expenses, setExpenses] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Filters
@@ -84,17 +84,43 @@ const Expenses = () => {
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   
-  // Form State
+  // Form & Action State
+  const [actionLoading, setActionLoading] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [formData, setFormData] = useState({
-    name: '',
+    description: '',
     amount: '',
     category: CATEGORIES[0],
-    date: new Date().toISOString().split('T')[0],
-    notes: ''
+    expense_date: new Date().toISOString().split('T')[0]
   });
   
   const [expenseToDelete, setExpenseToDelete] = useState(null);
+
+  // Data Fetching
+  const fetchExpenses = async () => {
+    if (!user) return;
+    try {
+      setIsLoading(true);
+      setError(null);
+      const { data, error: fetchError } = await supabase
+        .from('expenses')
+        .select('*')
+        .order('expense_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (fetchError) throw fetchError;
+      setExpenses(data || []);
+    } catch (err) {
+      console.error('Error fetching expenses:', err);
+      setError('Unable to load your expenses. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExpenses();
+  }, [user]);
 
   // Derived State (Summaries)
   const totalExpenses = useMemo(() => 
@@ -102,7 +128,7 @@ const Expenses = () => {
   , [expenses]);
 
   const thisMonthExpenses = useMemo(() => 
-    expenses.filter(exp => isCurrentMonth(exp.date)).reduce((sum, exp) => sum + Number(exp.amount), 0)
+    expenses.filter(exp => isCurrentMonth(exp.expense_date)).reduce((sum, exp) => sum + Number(exp.amount), 0)
   , [expenses]);
 
   const numberOfExpenses = expenses.length;
@@ -110,27 +136,27 @@ const Expenses = () => {
   // Derived State (Filtered List)
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
-      const matchesSearch = exp.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      const desc = exp.description || '';
+      const matchesSearch = desc.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             exp.category.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = categoryFilter === 'All Categories' || exp.category === categoryFilter;
       
       let matchesDate = true;
-      if (dateFilter === 'This Month') matchesDate = isCurrentMonth(exp.date);
-      if (dateFilter === 'Last Month') matchesDate = isLastMonth(exp.date);
+      if (dateFilter === 'This Month') matchesDate = isCurrentMonth(exp.expense_date);
+      if (dateFilter === 'Last Month') matchesDate = isLastMonth(exp.expense_date);
 
       return matchesSearch && matchesCategory && matchesDate;
-    }).sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort newest first
+    });
   }, [expenses, searchQuery, categoryFilter, dateFilter]);
 
   // Handlers
   const openAddModal = () => {
     setEditingExpenseId(null);
     setFormData({
-      name: '',
+      description: '',
       amount: '',
       category: CATEGORIES[0],
-      date: new Date().toISOString().split('T')[0],
-      notes: ''
+      expense_date: new Date().toISOString().split('T')[0]
     });
     setIsExpenseModalOpen(true);
   };
@@ -138,25 +164,57 @@ const Expenses = () => {
   const openEditModal = (expense) => {
     setEditingExpenseId(expense.id);
     setFormData({
-      name: expense.name,
+      description: expense.description || '',
       amount: expense.amount,
       category: expense.category,
-      date: expense.date,
-      notes: expense.notes || ''
+      expense_date: expense.expense_date
     });
     setIsExpenseModalOpen(true);
   };
 
-  const handleExpenseSubmit = (e) => {
+  const handleExpenseSubmit = async (e) => {
     e.preventDefault();
-    if (editingExpenseId) {
-      setExpenses(expenses.map(exp => 
-        exp.id === editingExpenseId ? { ...formData, id: exp.id } : exp
-      ));
-    } else {
-      setExpenses([...expenses, { ...formData, id: Date.now().toString() }]);
+    if (!user) return;
+    
+    try {
+      setActionLoading(true);
+      const amountValue = Number(formData.amount);
+      
+      if (amountValue <= 0) {
+        throw new Error('Amount must be greater than 0');
+      }
+
+      const payload = {
+        amount: amountValue,
+        category: formData.category,
+        description: formData.description,
+        expense_date: formData.expense_date
+      };
+
+      if (editingExpenseId) {
+        const { error: updateError } = await supabase
+          .from('expenses')
+          .update(payload)
+          .eq('id', editingExpenseId);
+          
+        if (updateError) throw updateError;
+      } else {
+        payload.user_id = user.id;
+        const { error: insertError } = await supabase
+          .from('expenses')
+          .insert([payload]);
+          
+        if (insertError) throw insertError;
+      }
+
+      setIsExpenseModalOpen(false);
+      fetchExpenses();
+    } catch (err) {
+      console.error('Error saving expense:', err);
+      alert(err.message || 'Error saving expense. Please try again.');
+    } finally {
+      setActionLoading(false);
     }
-    setIsExpenseModalOpen(false);
   };
 
   const confirmDelete = (id) => {
@@ -164,11 +222,56 @@ const Expenses = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleDelete = () => {
-    setExpenses(expenses.filter(exp => exp.id !== expenseToDelete));
-    setIsDeleteModalOpen(false);
-    setExpenseToDelete(null);
+  const handleDelete = async () => {
+    if (!expenseToDelete) return;
+    
+    try {
+      setActionLoading(true);
+      const { error: deleteError } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('id', expenseToDelete);
+        
+      if (deleteError) throw deleteError;
+      
+      setIsDeleteModalOpen(false);
+      setExpenseToDelete(null);
+      fetchExpenses();
+    } catch (err) {
+      console.error('Error deleting expense:', err);
+      alert('Error deleting expense. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading expenses...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans text-center">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-2">
+          <RefreshCw size={24} className="text-red-500" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900">Oops! Something went wrong</h2>
+        <p className="text-gray-500 font-medium max-w-md">{error}</p>
+        <button 
+          onClick={fetchExpenses}
+          className="mt-4 flex items-center gap-2 bg-gray-900 text-white py-2.5 px-6 rounded-full shadow-sm hover:bg-black transition-all"
+        >
+          <RefreshCw size={18} strokeWidth={2.5} />
+          <span className="font-bold text-sm">Retry</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto flex flex-col gap-8 pb-10 font-sans">
@@ -281,12 +384,11 @@ const Expenses = () => {
                   return (
                     <div key={expense.id} className="grid grid-cols-12 items-center py-4 border-b border-gray-100 last:border-0 hover:bg-gray-50/50 transition-colors px-2 rounded-xl">
                       <div className="col-span-2 text-[13px] font-medium text-gray-600">
-                        {formatDateDisplay(expense.date)}
+                        {formatDateDisplay(expense.expense_date)}
                       </div>
                       
                       <div className="col-span-4 pr-4">
-                        <span className="text-[14px] font-bold text-gray-900 tracking-tight">{expense.name}</span>
-                        {expense.notes && <p className="text-xs text-gray-500 truncate mt-0.5 font-medium">{expense.notes}</p>}
+                        <span className="text-[14px] font-bold text-gray-900 tracking-tight">{expense.description || expense.category}</span>
                       </div>
                       
                       <div className="col-span-3 flex items-center gap-3">
@@ -346,14 +448,14 @@ const Expenses = () => {
             <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar">
               <form id="expense-form" onSubmit={handleExpenseSubmit} className="space-y-5">
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-900">Expense Name *</label>
+                  <label className="text-sm font-bold text-gray-900">Description <span className="text-gray-400 font-medium">(Optional)</span></label>
                   <input
                     type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    value={formData.description}
+                    onChange={(e) => setFormData({...formData, description: e.target.value})}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:bg-white transition-all"
                     placeholder="e.g. Lunch, Electricity Bill"
+                    disabled={actionLoading}
                   />
                 </div>
 
@@ -373,6 +475,7 @@ const Expenses = () => {
                         onChange={(e) => setFormData({...formData, amount: e.target.value})}
                         className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:bg-white transition-all"
                         placeholder="Enter amount"
+                        disabled={actionLoading}
                       />
                     </div>
                   </div>
@@ -382,9 +485,10 @@ const Expenses = () => {
                     <input
                       type="date"
                       required
-                      value={formData.date}
-                      onChange={(e) => setFormData({...formData, date: e.target.value})}
+                      value={formData.expense_date}
+                      onChange={(e) => setFormData({...formData, expense_date: e.target.value})}
                       className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:bg-white transition-all"
+                      disabled={actionLoading}
                     />
                   </div>
                 </div>
@@ -397,6 +501,7 @@ const Expenses = () => {
                       value={formData.category}
                       onChange={(e) => setFormData({...formData, category: e.target.value})}
                       className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 appearance-none focus:outline-none focus:ring-2 focus:ring-gray-900 focus:bg-white transition-all"
+                      disabled={actionLoading}
                     >
                       {CATEGORIES.map(cat => (
                         <option key={cat} value={cat}>{cat}</option>
@@ -408,16 +513,7 @@ const Expenses = () => {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-900">Notes <span className="text-gray-400 font-medium">(Optional)</span></label>
-                  <textarea
-                    rows="3"
-                    value={formData.notes}
-                    onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:bg-white transition-all resize-none"
-                    placeholder="Add any additional notes..."
-                  ></textarea>
-                </div>
+
               </form>
             </div>
             
@@ -432,9 +528,10 @@ const Expenses = () => {
               <button 
                 type="submit"
                 form="expense-form"
-                className="px-6 py-2.5 rounded-full text-sm font-bold text-white bg-gray-900 hover:bg-black transition-colors shadow-sm"
+                disabled={actionLoading}
+                className="px-6 py-2.5 rounded-full text-sm font-bold text-white bg-gray-900 hover:bg-black transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                {editingExpenseId ? 'Save Changes' : 'Add Expense'}
+                {actionLoading ? 'Saving...' : (editingExpenseId ? 'Save Changes' : 'Add Expense')}
               </button>
             </div>
           </div>
@@ -461,9 +558,10 @@ const Expenses = () => {
               </button>
               <button 
                 onClick={handleDelete}
-                className="flex-1 py-3 rounded-full text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm"
+                disabled={actionLoading}
+                className="flex-1 py-3 rounded-full text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                Delete
+                {actionLoading ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

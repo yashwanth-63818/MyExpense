@@ -5,8 +5,10 @@ import {
   PiggyBank, Coins, Landmark, RefreshCcw, Database, ChevronRight,
   Wallet
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
-// --- Constants & Initial Data ---
+// --- Constants ---
 
 const SAVINGS_TYPES = {
   GOLD: 'Gold',
@@ -15,30 +17,21 @@ const SAVINGS_TYPES = {
   RD: 'Recurring Deposit'
 };
 
-const INITIAL_SAVINGS = [
-  { 
-    id: '1', type: SAVINGS_TYPES.GOLD, 
-    description: 'Gold Investment', date: '2025-05-28', amount: 6000 
-  },
-  { 
-    id: '2', type: SAVINGS_TYPES.GOLD, 
-    description: 'Gold Savings', date: '2025-05-10', amount: 4000 
-  },
-  { 
-    id: '3', type: SAVINGS_TYPES.SILVER, 
-    description: 'Silver Investment', date: '2025-05-20', amount: 2000 
-  },
-  { 
-    id: '4', type: SAVINGS_TYPES.FD, 
-    bank: 'SBI', startDate: '2025-01-01', maturityDate: '2026-01-01', 
-    interestRate: 7, amount: 10000 
-  },
-  { 
-    id: '5', type: SAVINGS_TYPES.RD, 
-    bank: 'HDFC', startDate: '2025-04-01', maturityDate: '2026-04-01', 
-    monthlyDeposit: 2500, interestRate: 6.5, currentTotal: 5000 
-  }
-];
+const DB_TYPE_MAP = {
+  [SAVINGS_TYPES.GOLD]: 'gold',
+  [SAVINGS_TYPES.SILVER]: 'silver',
+  [SAVINGS_TYPES.FD]: 'fixed_deposit',
+  [SAVINGS_TYPES.RD]: 'recurring_deposit'
+};
+
+const UI_TYPE_MAP = {
+  'gold': SAVINGS_TYPES.GOLD,
+  'silver': SAVINGS_TYPES.SILVER,
+  'fixed_deposit': SAVINGS_TYPES.FD,
+  'recurring_deposit': SAVINGS_TYPES.RD
+};
+
+
 
 // --- Helper Functions ---
 
@@ -54,7 +47,6 @@ const formatCurrency = (amount) => {
 };
 
 const getSavingsAmount = (item) => {
-  if (item.type === SAVINGS_TYPES.RD) return Number(item.currentTotal || 0);
   return Number(item.amount || 0);
 };
 
@@ -101,24 +93,54 @@ const TYPE_MAPPING = {
 };
 
 const Savings = () => {
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   
   // State
-  const [savings, setSavings] = useState(INITIAL_SAVINGS);
+  const [savings, setSavings] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
   const queryType = searchParams.get('type');
-  const initialCategory = queryType && TYPE_MAPPING[queryType] ? TYPE_MAPPING[queryType] : 'All Savings';
+  const initialCategory = queryType && UI_TYPE_MAP[queryType] ? UI_TYPE_MAP[queryType] : 'All Savings';
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
 
   // Sync category state with URL if it changes externally
   useEffect(() => {
-    if (queryType && TYPE_MAPPING[queryType]) {
-      setSelectedCategory(TYPE_MAPPING[queryType]);
+    if (queryType && UI_TYPE_MAP[queryType]) {
+      setSelectedCategory(UI_TYPE_MAP[queryType]);
     } else {
       setSelectedCategory('All Savings');
     }
   }, [queryType]);
+
+  // Data Fetching
+  const fetchSavings = async () => {
+    if (!user) return;
+    try {
+      setIsLoading(true);
+      setError(null);
+      const { data, error: fetchError } = await supabase
+        .from('savings')
+        .select('*')
+        .order('saving_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (fetchError) throw fetchError;
+      setSavings(data || []);
+    } catch (err) {
+      console.error('Error fetching savings:', err);
+      setError('Unable to load your savings. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSavings();
+  }, [user]);
 
   // Modals
   const [isTypeSelectModalOpen, setIsTypeSelectModalOpen] = useState(false);
@@ -132,30 +154,31 @@ const Savings = () => {
   const [itemToDelete, setItemToDelete] = useState(null);
 
   // Calculations
-  const goldTotal = useMemo(() => savings.filter(s => s.type === SAVINGS_TYPES.GOLD).reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
-  const silverTotal = useMemo(() => savings.filter(s => s.type === SAVINGS_TYPES.SILVER).reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
-  const fdTotal = useMemo(() => savings.filter(s => s.type === SAVINGS_TYPES.FD).reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
-  const rdTotal = useMemo(() => savings.filter(s => s.type === SAVINGS_TYPES.RD).reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
+  const goldTotal = useMemo(() => savings.filter(s => s.saving_type === 'gold').reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
+  const silverTotal = useMemo(() => savings.filter(s => s.saving_type === 'silver').reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
+  const fdTotal = useMemo(() => savings.filter(s => s.saving_type === 'fixed_deposit').reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
+  const rdTotal = useMemo(() => savings.filter(s => s.saving_type === 'recurring_deposit').reduce((sum, s) => sum + getSavingsAmount(s), 0), [savings]);
   const totalSavings = goldTotal + silverTotal + fdTotal + rdTotal;
   
   const counts = useMemo(() => {
     return {
-      [SAVINGS_TYPES.GOLD]: savings.filter(s => s.type === SAVINGS_TYPES.GOLD).length,
-      [SAVINGS_TYPES.SILVER]: savings.filter(s => s.type === SAVINGS_TYPES.SILVER).length,
-      [SAVINGS_TYPES.FD]: savings.filter(s => s.type === SAVINGS_TYPES.FD).length,
-      [SAVINGS_TYPES.RD]: savings.filter(s => s.type === SAVINGS_TYPES.RD).length,
+      [SAVINGS_TYPES.GOLD]: savings.filter(s => s.saving_type === 'gold').length,
+      [SAVINGS_TYPES.SILVER]: savings.filter(s => s.saving_type === 'silver').length,
+      [SAVINGS_TYPES.FD]: savings.filter(s => s.saving_type === 'fixed_deposit').length,
+      [SAVINGS_TYPES.RD]: savings.filter(s => s.saving_type === 'recurring_deposit').length,
     };
   }, [savings]);
 
   // Filtered List
   const filteredSavings = useMemo(() => {
     return savings.filter(item => {
-      const matchesCategory = selectedCategory === 'All Savings' || item.type === selectedCategory;
+      const itemUiType = UI_TYPE_MAP[item.saving_type];
+      const matchesCategory = selectedCategory === 'All Savings' || itemUiType === selectedCategory;
       const searchStr = searchQuery.toLowerCase();
-      const name = item.description || item.bank || '';
+      const name = item.description || itemUiType || '';
       const matchesSearch = name.toLowerCase().includes(searchStr);
       return matchesCategory && matchesSearch;
-    }).sort((a, b) => new Date(b.date || b.startDate) - new Date(a.date || a.startDate));
+    });
   }, [savings, selectedCategory, searchQuery]);
 
   // Handlers
@@ -165,7 +188,7 @@ const Savings = () => {
       setSearchParams({});
     } else {
       setSelectedCategory(type);
-      const key = Object.keys(TYPE_MAPPING).find(k => TYPE_MAPPING[k] === type);
+      const key = DB_TYPE_MAP[type];
       if (key) setSearchParams({ type: key });
     }
   };
@@ -181,34 +204,59 @@ const Savings = () => {
       setFormData({ ...existingItem });
     } else {
       setEditingId(null);
-      // Initialize defaults based on type
-      if (type === SAVINGS_TYPES.GOLD || type === SAVINGS_TYPES.SILVER) {
-        setFormData({ description: '', amount: '', date: new Date().toISOString().split('T')[0], quantity: '', notes: '' });
-      } else if (type === SAVINGS_TYPES.FD) {
-        setFormData({ bank: '', amount: '', interestRate: '', startDate: new Date().toISOString().split('T')[0], maturityDate: '', expectedAmount: '', notes: '' });
-      } else if (type === SAVINGS_TYPES.RD) {
-        setFormData({ bank: '', monthlyDeposit: '', interestRate: '', startDate: new Date().toISOString().split('T')[0], maturityDate: '', currentTotal: '', notes: '' });
-      }
+      setFormData({
+        description: '',
+        amount: '',
+        saving_date: new Date().toISOString().split('T')[0]
+      });
     }
     setIsTypeSelectModalOpen(false);
     setIsFormModalOpen(true);
   };
 
-  const handleFormSubmit = (e) => {
+  const handleFormSubmit = async (e) => {
     e.preventDefault();
-    let finalData = { ...formData, type: formType };
+    if (!user) return;
     
-    // Auto-fill currentTotal for RD if new
-    if (formType === SAVINGS_TYPES.RD && !editingId && !finalData.currentTotal) {
-      finalData.currentTotal = finalData.monthlyDeposit;
-    }
+    try {
+      setActionLoading(true);
+      const amountValue = Number(formData.amount);
+      
+      if (amountValue <= 0) {
+        throw new Error('Amount must be greater than 0');
+      }
 
-    if (editingId) {
-      setSavings(savings.map(s => s.id === editingId ? { ...finalData, id: s.id } : s));
-    } else {
-      setSavings([...savings, { ...finalData, id: Date.now().toString() }]);
+      const payload = {
+        saving_type: DB_TYPE_MAP[formType],
+        amount: amountValue,
+        description: formData.description,
+        saving_date: formData.saving_date
+      };
+
+      if (editingId) {
+        const { error: updateError } = await supabase
+          .from('savings')
+          .update(payload)
+          .eq('id', editingId);
+          
+        if (updateError) throw updateError;
+      } else {
+        payload.user_id = user.id;
+        const { error: insertError } = await supabase
+          .from('savings')
+          .insert([payload]);
+          
+        if (insertError) throw insertError;
+      }
+
+      setIsFormModalOpen(false);
+      fetchSavings();
+    } catch (err) {
+      console.error('Error saving record:', err);
+      alert(err.message || 'Error saving record. Please try again.');
+    } finally {
+      setActionLoading(false);
     }
-    setIsFormModalOpen(false);
   };
 
   const confirmDelete = (id) => {
@@ -216,211 +264,97 @@ const Savings = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleDelete = () => {
-    setSavings(savings.filter(s => s.id !== itemToDelete));
-    setIsDeleteModalOpen(false);
-    setItemToDelete(null);
+  const handleDelete = async () => {
+    if (!itemToDelete) return;
+    
+    try {
+      setActionLoading(true);
+      const { error: deleteError } = await supabase
+        .from('savings')
+        .delete()
+        .eq('id', itemToDelete);
+        
+      if (deleteError) throw deleteError;
+      
+      setIsDeleteModalOpen(false);
+      setItemToDelete(null);
+      fetchSavings();
+    } catch (err) {
+      console.error('Error deleting record:', err);
+      alert('Error deleting record. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const renderFormFields = () => {
-    if (formType === SAVINGS_TYPES.GOLD || formType === SAVINGS_TYPES.SILVER) {
-      return (
-        <>
+    return (
+      <>
+        <div className="space-y-2">
+          <label className="text-sm font-bold text-gray-900">Description <span className="text-gray-400 font-medium">(Optional)</span></label>
+          <input
+            type="text" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})}
+            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
+            placeholder={`e.g. ${formType} details`}
+            disabled={actionLoading}
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Description *</label>
-            <input
-              type="text" required value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
-              placeholder={`e.g. ${formType} investment`}
-            />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Amount *</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-gray-500 font-bold">₹</span>
-                <input
-                  type="number" required min="0" step="0.01" value={formData.amount || ''} onChange={e => setFormData({...formData, amount: e.target.value})}
-                  className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Date *</label>
-              <input
-                type="date" required value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Quantity <span className="text-gray-400 font-medium">(Optional)</span></label>
-            <input
-              type="text" value={formData.quantity || ''} onChange={e => setFormData({...formData, quantity: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
-              placeholder="e.g. 10g, 1 coin"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Notes <span className="text-gray-400 font-medium">(Optional)</span></label>
-            <textarea
-              rows="2" value={formData.notes || ''} onChange={e => setFormData({...formData, notes: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all resize-none"
-            ></textarea>
-          </div>
-        </>
-      );
-    }
-
-    if (formType === SAVINGS_TYPES.FD) {
-      return (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Bank Name *</label>
-              <input
-                type="text" required value={formData.bank || ''} onChange={e => setFormData({...formData, bank: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-                placeholder="e.g. SBI"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Deposit Amount *</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-gray-500 font-bold">₹</span>
-                <input
-                  type="number" required min="0" step="0.01" value={formData.amount || ''} onChange={e => setFormData({...formData, amount: e.target.value})}
-                  className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-                />
-              </div>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Interest Rate (%) *</label>
-            <input
-              type="number" required min="0" step="0.01" value={formData.interestRate || ''} onChange={e => setFormData({...formData, interestRate: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-              placeholder="e.g. 7"
-            />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Start Date *</label>
-              <input
-                type="date" required value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Maturity Date *</label>
-              <input
-                type="date" required value={formData.maturityDate || ''} onChange={e => setFormData({...formData, maturityDate: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Expected Maturity Amount <span className="text-gray-400 font-medium">(Optional)</span></label>
-            <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-gray-500 font-bold">₹</span>
-                <input
-                  type="number" min="0" step="0.01" value={formData.expectedAmount || ''} onChange={e => setFormData({...formData, expectedAmount: e.target.value})}
-                  className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-                />
-              </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Notes <span className="text-gray-400 font-medium">(Optional)</span></label>
-            <textarea
-              rows="2" value={formData.notes || ''} onChange={e => setFormData({...formData, notes: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 resize-none"
-            ></textarea>
-          </div>
-        </>
-      );
-    }
-
-    if (formType === SAVINGS_TYPES.RD) {
-      return (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Bank Name *</label>
-              <input
-                type="text" required value={formData.bank || ''} onChange={e => setFormData({...formData, bank: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Monthly Deposit *</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-gray-500 font-bold">₹</span>
-                <input
-                  type="number" required min="0" step="0.01" value={formData.monthlyDeposit || ''} onChange={e => setFormData({...formData, monthlyDeposit: e.target.value})}
-                  className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-                />
-              </div>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Interest Rate (%) *</label>
-            <input
-              type="number" required min="0" step="0.01" value={formData.interestRate || ''} onChange={e => setFormData({...formData, interestRate: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-            />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Start Date *</label>
-              <input
-                type="date" required value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-900">Maturity Date *</label>
-              <input
-                type="date" required value={formData.maturityDate || ''} onChange={e => setFormData({...formData, maturityDate: e.target.value})}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Current Total Deposited *</label>
+            <label className="text-sm font-bold text-gray-900">Amount *</label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-gray-500 font-bold">₹</span>
               <input
-                type="number" required min="0" step="0.01" value={formData.currentTotal || ''} onChange={e => setFormData({...formData, currentTotal: e.target.value})}
-                className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900"
-                placeholder={formData.monthlyDeposit ? "Defaults to Monthly Deposit" : "Amount currently invested"}
+                type="number" required min="0" step="0.01" value={formData.amount || ''} onChange={e => setFormData({...formData, amount: e.target.value})}
+                className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
+                disabled={actionLoading}
               />
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-bold text-gray-900">Notes <span className="text-gray-400 font-medium">(Optional)</span></label>
-            <textarea
-              rows="2" value={formData.notes || ''} onChange={e => setFormData({...formData, notes: e.target.value})}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 resize-none"
-            ></textarea>
+            <label className="text-sm font-bold text-gray-900">Date *</label>
+            <input
+              type="date" required value={formData.saving_date || ''} onChange={e => setFormData({...formData, saving_date: e.target.value})}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-gray-900 transition-all"
+              disabled={actionLoading}
+            />
           </div>
-        </>
-      );
-    }
-    return null;
+        </div>
+      </>
+    );
   };
 
   const renderTableDetails = (item) => {
-    if (item.type === SAVINGS_TYPES.GOLD || item.type === SAVINGS_TYPES.SILVER) {
-      return item.quantity ? `Quantity: ${item.quantity}` : `${item.type} Investment`;
-    }
-    if (item.type === SAVINGS_TYPES.FD) {
-      return `${item.bank} • ${item.interestRate}% interest`;
-    }
-    if (item.type === SAVINGS_TYPES.RD) {
-      return `${item.bank} • ₹${item.monthlyDeposit}/month • ${item.interestRate}%`;
-    }
     return '-';
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading savings...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans text-center">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-2">
+          <RefreshCcw size={24} className="text-red-500" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900">Oops! Something went wrong</h2>
+        <p className="text-gray-500 font-medium max-w-md">{error}</p>
+        <button 
+          onClick={fetchSavings}
+          className="mt-4 flex items-center gap-2 bg-gray-900 text-white py-2.5 px-6 rounded-full shadow-sm hover:bg-black transition-all"
+        >
+          <RefreshCcw size={18} strokeWidth={2.5} />
+          <span className="font-bold text-sm">Retry</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto flex flex-col gap-8 pb-10 font-sans">
@@ -528,16 +462,16 @@ const Savings = () => {
                     
                     <div className="col-span-2 flex items-center gap-3 pl-2">
                       <div className="bg-gray-50 w-8 h-8 rounded-full flex items-center justify-center border border-gray-100">
-                        {item.type === SAVINGS_TYPES.GOLD && <Coins size={14} className="text-gray-700" strokeWidth={2.5} />}
-                        {item.type === SAVINGS_TYPES.SILVER && <Database size={14} className="text-gray-700" strokeWidth={2.5} />}
-                        {item.type === SAVINGS_TYPES.FD && <Landmark size={14} className="text-gray-700" strokeWidth={2.5} />}
-                        {item.type === SAVINGS_TYPES.RD && <RefreshCcw size={14} className="text-gray-700" strokeWidth={2.5} />}
+                        {item.saving_type === 'gold' && <Coins size={14} className="text-gray-700" strokeWidth={2.5} />}
+                        {item.saving_type === 'silver' && <Database size={14} className="text-gray-700" strokeWidth={2.5} />}
+                        {item.saving_type === 'fixed_deposit' && <Landmark size={14} className="text-gray-700" strokeWidth={2.5} />}
+                        {item.saving_type === 'recurring_deposit' && <RefreshCcw size={14} className="text-gray-700" strokeWidth={2.5} />}
                       </div>
-                      <span className="text-[13px] font-semibold text-gray-700">{item.type}</span>
+                      <span className="text-[13px] font-semibold text-gray-700">{UI_TYPE_MAP[item.saving_type]}</span>
                     </div>
                     
                     <div className="col-span-3 pr-4">
-                      <span className="text-[14px] font-bold text-gray-900 tracking-tight">{item.description || item.bank}</span>
+                      <span className="text-[14px] font-bold text-gray-900 tracking-tight">{item.description || UI_TYPE_MAP[item.saving_type]}</span>
                     </div>
 
                     <div className="col-span-3 pr-4">
@@ -545,7 +479,7 @@ const Savings = () => {
                     </div>
 
                     <div className="col-span-1 text-[13px] font-medium text-gray-600">
-                      {formatDateDisplay(item.date || item.startDate)}
+                      {formatDateDisplay(item.saving_date)}
                     </div>
                     
                     <div className="col-span-2 text-[14px] font-bold text-right text-gray-900 pr-4 tracking-tight">
@@ -554,7 +488,7 @@ const Savings = () => {
                     
                     <div className="col-span-1 flex items-center justify-center gap-1">
                       <button 
-                        onClick={() => openForm(item.type, item)}
+                        onClick={() => openForm(UI_TYPE_MAP[item.saving_type], item)}
                         className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
                       >
                         <Pencil size={16} strokeWidth={2.5} />
@@ -642,9 +576,10 @@ const Savings = () => {
               </button>
               <button 
                 type="submit" form="savings-form"
-                className="px-6 py-2.5 rounded-full text-sm font-bold text-white bg-gray-900 hover:bg-black"
+                disabled={actionLoading}
+                className="px-6 py-2.5 rounded-full text-sm font-bold text-white bg-gray-900 hover:bg-black disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                {editingId ? 'Save Changes' : `Add ${formType === SAVINGS_TYPES.FD || formType === SAVINGS_TYPES.RD ? 'Deposit' : formType}`}
+                {actionLoading ? 'Saving...' : (editingId ? 'Save Changes' : `Add ${formType === SAVINGS_TYPES.FD || formType === SAVINGS_TYPES.RD ? 'Deposit' : formType}`)}
               </button>
             </div>
           </div>
@@ -666,8 +601,8 @@ const Savings = () => {
               <button onClick={() => setIsDeleteModalOpen(false)} className="flex-1 py-3 rounded-full text-sm font-bold text-gray-700 border border-gray-200 hover:bg-gray-50">
                 Cancel
               </button>
-              <button onClick={handleDelete} className="flex-1 py-3 rounded-full text-sm font-bold text-white bg-red-600 hover:bg-red-700">
-                Delete
+              <button onClick={handleDelete} disabled={actionLoading} className="flex-1 py-3 rounded-full text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-70 disabled:cursor-not-allowed">
+                {actionLoading ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>
