@@ -1,9 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Plus, Bell, Clock, CheckCircle2, CalendarClock,
   Search, Receipt, RefreshCcw, Landmark, Repeat,
   CreditCard, Pencil, Trash2, X, AlertCircle
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const CATEGORIES = [
   { name: "Bill Payment", icon: Receipt },
@@ -14,54 +16,21 @@ const CATEGORIES = [
   { name: "Custom", icon: Bell }
 ];
 
-const INITIAL_DATA = [
-  {
-    id: 1,
-    title: "Electricity Bill",
-    category: "Bill Payment",
-    dueDate: "2025-06-05",
-    description: "Pay monthly electricity bill.",
-    completed: false,
-    repeat: "Monthly"
-  },
-  {
-    id: 2,
-    title: "Netflix Subscription",
-    category: "Subscription",
-    dueDate: "2025-06-10",
-    description: "Monthly subscription renewal.",
-    completed: false,
-    repeat: "Monthly"
-  },
-  {
-    id: 3,
-    title: "RD Monthly Deposit",
-    category: "Recurring Deposit",
-    dueDate: "2025-06-01",
-    description: "Deposit ₹2,500 into recurring deposit.",
-    completed: false,
-    repeat: "Monthly"
-  },
-  {
-    id: 4,
-    title: "FD Maturity",
-    category: "Fixed Deposit",
-    dueDate: "2026-01-01",
-    description: "Review or renew fixed deposit.",
-    completed: false,
-    repeat: "Does not repeat"
-  },
-  {
-    id: 5,
-    title: "Phone Bill",
-    category: "Bill Payment",
-    dueDate: "2025-05-25",
-    description: "Monthly mobile recharge/payment.",
-    completed: true,
-    repeat: "Monthly"
-  }
-];
+const DB_REPEAT_TYPES = {
+  'Does not repeat': 'none',
+  'Daily': 'daily',
+  'Weekly': 'weekly',
+  'Monthly': 'monthly',
+  'Yearly': 'yearly'
+};
 
+const UI_REPEAT_TYPES = {
+  'none': 'Does not repeat',
+  'daily': 'Daily',
+  'weekly': 'Weekly',
+  'monthly': 'Monthly',
+  'yearly': 'Yearly'
+};
 const calculateStatus = (dueDateStr, completed) => {
   if (completed) return 'Completed';
   
@@ -137,7 +106,12 @@ const StatusBadge = ({ status }) => {
 };
 
 const Reminders = () => {
-  const [reminders, setReminders] = useState(INITIAL_DATA);
+  const { user } = useAuth();
+  
+  const [reminders, setReminders] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -160,11 +134,37 @@ const Reminders = () => {
   const [repeatInput, setRepeatInput] = useState('Does not repeat');
   const [formError, setFormError] = useState('');
 
+  // Data Fetching
+  const fetchReminders = async () => {
+    if (!user) return;
+    try {
+      setIsLoading(true);
+      setError(null);
+      const { data, error: fetchError } = await supabase
+        .from('reminders')
+        .select('*')
+        .order('is_completed', { ascending: true })
+        .order('due_date', { ascending: true });
+        
+      if (fetchError) throw fetchError;
+      setReminders(data || []);
+    } catch (err) {
+      console.error(err);
+      setError('Unable to load your reminders. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReminders();
+  }, [user]);
+
   // Processed Data
   const processedReminders = useMemo(() => {
     return reminders.map(r => ({
       ...r,
-      status: calculateStatus(r.dueDate, r.completed)
+      status: calculateStatus(r.due_date, r.is_completed)
     }));
   }, [reminders]);
 
@@ -221,43 +221,54 @@ const Reminders = () => {
     setEditingId(reminder.id);
     setTitleInput(reminder.title);
     setCategoryInput(reminder.category);
-    setDueDateInput(reminder.dueDate);
+    setDueDateInput(reminder.due_date);
     setDescriptionInput(reminder.description || '');
-    setRepeatInput(reminder.repeat || 'Does not repeat');
+    setRepeatInput(UI_REPEAT_TYPES[reminder.repeat_type] || 'Does not repeat');
     setFormError('');
     setIsReminderModalOpen(true);
   };
 
-  const handleSaveReminder = () => {
+  const handleSaveReminder = async () => {
     if (!titleInput.trim() || !dueDateInput) {
       setFormError('Please fill in all required fields.');
       return;
     }
 
-    setReminders(prev => {
-      if (modalMode === 'add') {
-        return [...prev, {
-          id: Date.now(),
-          title: titleInput.trim(),
-          category: categoryInput,
-          dueDate: dueDateInput,
-          description: descriptionInput.trim(),
-          completed: false,
-          repeat: repeatInput
-        }];
-      } else {
-        return prev.map(r => r.id === editingId ? {
-          ...r,
-          title: titleInput.trim(),
-          category: categoryInput,
-          dueDate: dueDateInput,
-          description: descriptionInput.trim(),
-          repeat: repeatInput
-        } : r);
-      }
-    });
+    try {
+      setActionLoading(true);
+      const payload = {
+        title: titleInput.trim(),
+        category: categoryInput,
+        due_date: dueDateInput,
+        description: descriptionInput.trim(),
+        repeat_type: DB_REPEAT_TYPES[repeatInput] || 'none'
+      };
 
-    setIsReminderModalOpen(false);
+      if (modalMode === 'add') {
+        payload.user_id = user.id;
+        payload.is_completed = false;
+        payload.completed_at = null;
+        
+        const { error: insertError } = await supabase
+          .from('reminders')
+          .insert([payload]);
+        if (insertError) throw insertError;
+      } else {
+        const { error: updateError } = await supabase
+          .from('reminders')
+          .update(payload)
+          .eq('id', editingId);
+        if (updateError) throw updateError;
+      }
+
+      setIsReminderModalOpen(false);
+      fetchReminders();
+    } catch (err) {
+      console.error(err);
+      setFormError('An error occurred while saving.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const confirmDelete = (id) => {
@@ -265,14 +276,97 @@ const Reminders = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleDelete = () => {
-    setReminders(prev => prev.filter(r => r.id !== deletingId));
-    setIsDeleteModalOpen(false);
+  const handleDelete = async () => {
+    try {
+      setActionLoading(true);
+      const { error: deleteError } = await supabase
+        .from('reminders')
+        .delete()
+        .eq('id', deletingId);
+      if (deleteError) throw deleteError;
+      setIsDeleteModalOpen(false);
+      fetchReminders();
+    } catch (err) {
+      console.error(err);
+      alert('Error deleting reminder.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
-  const toggleComplete = (id, currentStatus) => {
-    setReminders(prev => prev.map(r => r.id === id ? { ...r, completed: !currentStatus } : r));
+  const toggleComplete = async (reminder) => {
+    try {
+      setActionLoading(true);
+      const { id, is_completed, repeat_type, due_date } = reminder;
+      
+      let payload = {};
+      
+      if (!is_completed) {
+         if (repeat_type === 'none') {
+           payload = { is_completed: true, completed_at: new Date().toISOString() };
+         } else {
+           const currentDue = new Date(due_date);
+           let nextDue = new Date(currentDue.getTime() + Math.abs(currentDue.getTimezoneOffset()*60000));
+           
+           if (repeat_type === 'daily') {
+             nextDue.setDate(nextDue.getDate() + 1);
+           } else if (repeat_type === 'weekly') {
+             nextDue.setDate(nextDue.getDate() + 7);
+           } else if (repeat_type === 'monthly') {
+             nextDue.setMonth(nextDue.getMonth() + 1);
+           } else if (repeat_type === 'yearly') {
+             nextDue.setFullYear(nextDue.getFullYear() + 1);
+           }
+           
+           const nextDueStr = nextDue.toISOString().split('T')[0];
+           payload = { due_date: nextDueStr, is_completed: false, completed_at: new Date().toISOString() };
+         }
+      } else {
+         payload = { is_completed: false, completed_at: null };
+      }
+      
+      const { error: updateError } = await supabase
+        .from('reminders')
+        .update(payload)
+        .eq('id', id);
+        
+      if (updateError) throw updateError;
+      fetchReminders();
+    } catch (err) {
+       console.error(err);
+       alert('Error updating status.');
+    } finally {
+       setActionLoading(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading reminders...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans text-center">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-2">
+          <RefreshCcw size={24} className="text-red-500" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900">Oops! Something went wrong</h2>
+        <p className="text-gray-500 font-medium max-w-md">{error}</p>
+        <button 
+          onClick={fetchReminders}
+          className="mt-4 flex items-center gap-2 bg-gray-900 text-white py-2.5 px-6 rounded-full shadow-sm hover:bg-black transition-all"
+        >
+          <RefreshCcw size={18} strokeWidth={2.5} />
+          <span className="font-bold text-sm">Retry</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto flex flex-col gap-8 pb-10 font-sans">
@@ -345,10 +439,10 @@ const Reminders = () => {
         {/* Reminders List */}
         {filteredReminders.length > 0 ? (
           <div className="grid grid-cols-1 gap-4">
-            {filteredReminders.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)).map(reminder => {
+            {filteredReminders.map(reminder => {
               const categoryConfig = CATEGORIES.find(c => c.name === reminder.category) || CATEGORIES[CATEGORIES.length - 1];
               const Icon = categoryConfig.icon;
-              const isCompleted = reminder.completed;
+              const isCompleted = reminder.is_completed;
 
               return (
                 <div key={reminder.id} className={`flex flex-col sm:flex-row sm:items-center justify-between p-5 rounded-[20px] border transition-all ${isCompleted ? 'bg-gray-50/50 border-gray-100 opacity-70' : 'bg-white border-gray-100 hover:border-gray-200 hover:shadow-sm'}`}>
@@ -369,11 +463,11 @@ const Reminders = () => {
                       <div className="flex flex-wrap items-center gap-3 text-[13px] font-semibold text-gray-500">
                         <span>{reminder.category}</span>
                         <span className="w-1 h-1 rounded-full bg-gray-300"></span>
-                        <span>Due {formatDate(reminder.dueDate)}</span>
-                        {reminder.repeat !== 'Does not repeat' && (
+                        <span>Due {formatDate(reminder.due_date)}</span>
+                        {reminder.repeat_type !== 'none' && (
                           <>
                             <span className="w-1 h-1 rounded-full bg-gray-300"></span>
-                            <span>Repeats {reminder.repeat}</span>
+                            <span>Repeats {UI_REPEAT_TYPES[reminder.repeat_type]}</span>
                           </>
                         )}
                       </div>
@@ -386,8 +480,9 @@ const Reminders = () => {
 
                   <div className="flex items-center gap-2 mt-4 sm:mt-0 sm:pl-4 sm:border-l border-gray-100 shrink-0">
                     <button 
-                      onClick={() => toggleComplete(reminder.id, reminder.completed)}
-                      className={`px-4 py-2 rounded-xl text-[12px] font-bold transition-colors ${isCompleted ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'bg-gray-900 text-white hover:bg-gray-800 shadow-sm'}`}
+                      onClick={() => toggleComplete(reminder)}
+                      disabled={actionLoading}
+                      className={`px-4 py-2 rounded-xl text-[12px] font-bold transition-colors ${isCompleted ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'bg-gray-900 text-white hover:bg-gray-800 shadow-sm'} disabled:opacity-70 disabled:cursor-not-allowed`}
                     >
                       {isCompleted ? 'Mark as Incomplete' : 'Mark as Complete'}
                     </button>
@@ -514,9 +609,10 @@ const Reminders = () => {
             </button>
             <button 
               onClick={handleSaveReminder}
-              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm"
+              disabled={actionLoading}
+              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              {modalMode === 'add' ? 'Add Reminder' : 'Save Changes'}
+              {actionLoading ? 'Saving...' : (modalMode === 'add' ? 'Add Reminder' : 'Save Changes')}
             </button>
           </div>
         </ModalOverlay>
@@ -541,9 +637,10 @@ const Reminders = () => {
             </button>
             <button 
               onClick={handleDelete}
-              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm"
+              disabled={actionLoading}
+              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              Delete
+              {actionLoading ? 'Deleting...' : 'Delete'}
             </button>
           </div>
         </ModalOverlay>

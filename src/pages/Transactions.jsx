@@ -1,26 +1,18 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, Filter, Eye, Trash2, X, Download, 
   ArrowDownLeft, ArrowUpRight, PiggyBank,
-  Wallet, CreditCard, Inbox, ChevronDown
+  Wallet, CreditCard, Inbox, ChevronDown, RefreshCcw
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
-// --- Initial Data ---
-const INITIAL_TRANSACTIONS = [
-  { id: '1', date: '2025-05-31', type: 'amount_received', displayType: 'Amount Received', description: 'Monthly Salary', category: 'Company', amount: 50000, notes: '' },
-  { id: '2', date: '2025-05-25', type: 'amount_received', displayType: 'Amount Received', description: 'Freelance Project', category: 'Client', amount: 5000, notes: '' },
-  { id: '3', date: '2025-05-15', type: 'amount_received', displayType: 'Amount Received', description: 'Money Received', category: 'Friend', amount: 2000, notes: '' },
-  
-  { id: '4', date: '2025-05-30', type: 'expense', displayType: 'Expense', description: 'Dinner', category: 'Food & Dining', amount: 650, notes: '' },
-  { id: '5', date: '2025-05-29', type: 'expense', displayType: 'Expense', description: 'Taxi', category: 'Travel', amount: 350, notes: '' },
-  { id: '6', date: '2025-05-27', type: 'expense', displayType: 'Expense', description: 'Online Shopping', category: 'Shopping', amount: 2500, notes: '' },
-  { id: '7', date: '2025-05-25', type: 'expense', displayType: 'Expense', description: 'Electricity Bill', category: 'Bills & Utilities', amount: 1800, notes: '' },
-  
-  { id: '8', date: '2025-05-28', type: 'savings', displayType: 'Savings', description: 'Gold Investment', category: 'Gold', amount: 6000, notes: '' },
-  { id: '9', date: '2025-05-20', type: 'savings', displayType: 'Savings', description: 'Silver Investment', category: 'Silver', amount: 2000, notes: '' },
-  { id: '10', date: '2025-01-01', type: 'savings', displayType: 'Savings', description: 'Fixed Deposit', category: 'Fixed Deposit', amount: 10000, notes: '' },
-  { id: '11', date: '2025-04-01', type: 'savings', displayType: 'Savings', description: 'Recurring Deposit', category: 'Recurring Deposit', amount: 5000, notes: '' },
-];
+const SAVING_TYPE_MAP = {
+  'gold': 'Gold',
+  'silver': 'Silver',
+  'fixed_deposit': 'Fixed Deposit',
+  'recurring_deposit': 'Recurring Deposit'
+};
 
 const CATEGORIES = [
   'Food & Dining', 'Travel', 'Shopping', 'Bills & Utilities', 
@@ -86,8 +78,12 @@ const TypeIcon = ({ type }) => {
 };
 
 const Transactions = () => {
+  const { user } = useAuth();
+  
   // State
-  const [transactions, setTransactions] = useState(INITIAL_TRANSACTIONS);
+  const [transactions, setTransactions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -97,7 +93,6 @@ const Transactions = () => {
   
   // Modal States
   const [viewingTransaction, setViewingTransaction] = useState(null);
-  const [itemToDelete, setItemToDelete] = useState(null);
 
   // Dropdown UI states
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
@@ -113,6 +108,95 @@ const Transactions = () => {
     setDateFilter('All Time');
   };
 
+  // Data Fetching
+  const fetchTransactions = async () => {
+    if (!user) return;
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const [
+        { data: amountReceivedData, error: amountReceivedError },
+        { data: expensesData, error: expensesError },
+        { data: savingsData, error: savingsError }
+      ] = await Promise.all([
+        supabase.from('amount_received').select('*'),
+        supabase.from('expenses').select('*'),
+        supabase.from('savings').select('*')
+      ]);
+
+      if (amountReceivedError) throw amountReceivedError;
+      if (expensesError) throw expensesError;
+      if (savingsError) throw savingsError;
+
+      const normalizedTransactions = [];
+
+      (amountReceivedData || []).forEach(record => {
+        normalizedTransactions.push({
+          id: `received-${record.id}`,
+          sourceId: record.id,
+          type: 'amount_received',
+          displayType: 'Amount Received',
+          title: record.source,
+          category: 'Amount Received',
+          description: record.description || record.source,
+          amount: Number(record.amount),
+          date: record.received_date,
+          createdAt: record.created_at
+        });
+      });
+
+      (expensesData || []).forEach(record => {
+        normalizedTransactions.push({
+          id: `expense-${record.id}`,
+          sourceId: record.id,
+          type: 'expense',
+          displayType: 'Expense',
+          title: record.category,
+          category: 'Expense',
+          description: record.description || record.category,
+          amount: Number(record.amount),
+          date: record.expense_date,
+          createdAt: record.created_at
+        });
+      });
+
+      (savingsData || []).forEach(record => {
+        normalizedTransactions.push({
+          id: `saving-${record.id}`,
+          sourceId: record.id,
+          type: 'savings',
+          displayType: 'Savings',
+          title: SAVING_TYPE_MAP[record.saving_type] || record.saving_type,
+          category: 'Savings',
+          description: record.description || SAVING_TYPE_MAP[record.saving_type] || record.saving_type,
+          amount: Number(record.amount),
+          date: record.saving_date,
+          createdAt: record.created_at
+        });
+      });
+
+      normalizedTransactions.sort((a, b) => {
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+        if (dateA < dateB) return 1;
+        if (dateA > dateB) return -1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+
+      setTransactions(normalizedTransactions);
+    } catch (err) {
+      console.error(err);
+      setError('Unable to load your transactions. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [user]);
+
   // Calculations
   const totalReceived = useMemo(() => transactions.filter(t => t.type === 'amount_received').reduce((sum, t) => sum + t.amount, 0), [transactions]);
   const totalExpenses = useMemo(() => transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0), [transactions]);
@@ -123,6 +207,7 @@ const Transactions = () => {
     return transactions.filter(t => {
       const s = searchQuery.toLowerCase();
       const matchesSearch = !searchQuery || 
+        (t.title?.toLowerCase().includes(s)) ||
         (t.description?.toLowerCase().includes(s)) ||
         (t.category?.toLowerCase().includes(s)) ||
         (t.displayType?.toLowerCase().includes(s));
@@ -141,12 +226,6 @@ const Transactions = () => {
   }, [transactions, searchQuery, typeFilter, categoryFilter, dateFilter]);
 
   // Handlers
-  const handleDelete = () => {
-    if (itemToDelete) {
-      setTransactions(transactions.filter(t => t.id !== itemToDelete));
-      setItemToDelete(null);
-    }
-  };
 
   const handleExport = () => {
     if (filteredTransactions.length === 0) return;
@@ -174,6 +253,34 @@ const Transactions = () => {
     link.click();
     document.body.removeChild(link);
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading transactions...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans text-center">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-2">
+          <RefreshCcw size={24} className="text-red-500" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900">Oops! Something went wrong</h2>
+        <p className="text-gray-500 font-medium max-w-md">{error}</p>
+        <button 
+          onClick={fetchTransactions}
+          className="mt-4 flex items-center gap-2 bg-gray-900 text-white py-2.5 px-6 rounded-full shadow-sm hover:bg-black transition-all"
+        >
+          <RefreshCcw size={18} strokeWidth={2.5} />
+          <span className="font-bold text-sm">Retry</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto flex flex-col gap-8 pb-10 font-sans">
@@ -363,13 +470,6 @@ const Transactions = () => {
                       >
                         <Eye size={16} strokeWidth={2.5} />
                       </button>
-                      <button 
-                        onClick={() => setItemToDelete(item.id)}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 size={16} strokeWidth={2.5} />
-                      </button>
                     </div>
                   </div>
                 ))
@@ -429,29 +529,6 @@ const Transactions = () => {
                 className="w-full py-3 rounded-full text-sm font-bold text-gray-900 bg-gray-100 hover:bg-gray-200 transition-colors"
               >
                 Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Modal */}
-      {itemToDelete && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-[24px] w-full max-w-sm shadow-xl p-8 text-center">
-            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
-              <Trash2 size={24} className="text-red-500" strokeWidth={2} />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Transaction</h3>
-            <p className="text-sm font-medium text-gray-500 mb-8">
-              Are you sure you want to delete this transaction? This action cannot be undone.
-            </p>
-            <div className="flex items-center gap-3 w-full">
-              <button onClick={() => setItemToDelete(null)} className="flex-1 py-3 rounded-full text-sm font-bold text-gray-700 border border-gray-200 hover:bg-gray-50">
-                Cancel
-              </button>
-              <button onClick={handleDelete} className="flex-1 py-3 rounded-full text-sm font-bold text-white bg-red-600 hover:bg-red-700">
-                Delete
               </button>
             </div>
           </div>

@@ -1,9 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Calendar, ChevronDown, Plus, Wallet, CreditCard, Target,
   Utensils, Plane, ShoppingBag, Zap, Film, Heart, Book, HelpCircle,
-  Pencil, Trash2, X
+  Pencil, Trash2, X, RefreshCcw
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const CATEGORIES = [
   { name: "Food & Dining", icon: Utensils },
@@ -16,20 +18,7 @@ const CATEGORIES = [
   { name: "Other", icon: HelpCircle },
 ];
 
-const INITIAL_DATA = {
-  "2025-05": {
-    monthlyBudget: 25000,
-    categories: [
-      { id: 1, category: "Food & Dining", budget: 5000, spent: 3500 },
-      { id: 2, category: "Travel", budget: 3000, spent: 1500 },
-      { id: 3, category: "Shopping", budget: 5000, spent: 2500 },
-      { id: 4, category: "Bills & Utilities", budget: 4000, spent: 2000 },
-      { id: 5, category: "Entertainment", budget: 2000, spent: 1000 },
-      { id: 6, category: "Health", budget: 3000, spent: 1000 },
-      { id: 7, category: "Education", budget: 3000, spent: 500 },
-    ]
-  }
-};
+
 
 const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-IN', {
@@ -61,9 +50,31 @@ const ModalOverlay = ({ children, onClose }) => (
 );
 
 const Budget = () => {
-  const [budgetData, setBudgetData] = useState(INITIAL_DATA);
-  const [selectedMonth, setSelectedMonth] = useState("2025-05");
+  const { user } = useAuth();
+  
+  // Dynamically generate month options around the current month
+  const monthOptions = useMemo(() => {
+    const options = [];
+    const date = new Date();
+    for (let i = -6; i <= 6; i++) {
+      const d = new Date(date.getFullYear(), date.getMonth() + i, 1);
+      const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+      options.push({ value, label });
+    }
+    return options;
+  }, []);
+
+  const currentMonthStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
   const [filter, setFilter] = useState('All');
+
+  // Supabase states
+  const [budgets, setBudgets] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Modal states
   const [isSetBudgetModalOpen, setIsSetBudgetModalOpen] = useState(false);
@@ -75,23 +86,87 @@ const Budget = () => {
 
   // Form states
   const [monthlyBudgetInput, setMonthlyBudgetInput] = useState("");
-  const [budgetMonthInput, setBudgetMonthInput] = useState("2025-05");
+  const [budgetMonthInput, setBudgetMonthInput] = useState(currentMonthStr);
   const [budgetNotesInput, setBudgetNotesInput] = useState("");
 
   const [categoryInput, setCategoryInput] = useState("Food & Dining");
   const [categoryBudgetInput, setCategoryBudgetInput] = useState("");
   const [categoryError, setCategoryError] = useState("");
 
+  // Data Fetching
+  const fetchBudgets = async () => {
+    if (!user) return;
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const { data: budgetsData, error: budgetsError } = await supabase
+        .from('budgets')
+        .select('*');
+        
+      if (budgetsError) throw budgetsError;
+      setBudgets(budgetsData || []);
+      
+      const { data: expensesData, error: expensesError } = await supabase
+        .from('expenses')
+        .select('*');
+        
+      if (expensesError) throw expensesError;
+      setExpenses(expensesData || []);
+      
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError('Unable to load your budgets. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBudgets();
+  }, [user]);
+
   // Derived state
-  const currentData = budgetData[selectedMonth] || { monthlyBudget: 0, categories: [] };
-  const totalBudget = currentData.monthlyBudget;
-  const totalSpent = currentData.categories.reduce((acc, cat) => acc + cat.spent, 0);
+  const firstDayOfSelectedMonth = `${selectedMonth}-01`;
+  
+  const currentMonthBudgets = useMemo(() => {
+    return budgets.filter(b => b.budget_month === firstDayOfSelectedMonth);
+  }, [budgets, firstDayOfSelectedMonth]);
+
+  const monthlyBudgetRecord = currentMonthBudgets.find(b => b.budget_type === 'monthly');
+  const totalBudget = monthlyBudgetRecord ? Number(monthlyBudgetRecord.amount) : 0;
+  
+  const currentMonthExpenses = useMemo(() => {
+    return expenses.filter(e => {
+      const expenseMonth = e.expense_date.substring(0, 7); // "YYYY-MM"
+      return expenseMonth === selectedMonth;
+    });
+  }, [expenses, selectedMonth]);
+
+  const totalSpent = currentMonthExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
   const remainingBudget = totalBudget - totalSpent;
   const overallPercentage = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0;
   const isOverBudget = totalSpent > totalBudget;
 
+  const currentCategories = useMemo(() => {
+    return currentMonthBudgets
+      .filter(b => b.budget_type === 'category')
+      .map(b => {
+        const catSpent = currentMonthExpenses
+          .filter(e => e.category === b.category)
+          .reduce((sum, e) => sum + Number(e.amount), 0);
+        return {
+          id: b.id,
+          category: b.category,
+          budget: Number(b.amount),
+          spent: catSpent,
+          notes: b.notes
+        };
+      });
+  }, [currentMonthBudgets, currentMonthExpenses]);
+
   const filteredCategories = useMemo(() => {
-    return currentData.categories.filter(cat => {
+    return currentCategories.filter(cat => {
       const pct = cat.budget > 0 ? (cat.spent / cat.budget) * 100 : 0;
       if (filter === 'All') return true;
       if (filter === 'On Track') return pct < 80;
@@ -99,32 +174,62 @@ const Budget = () => {
       if (filter === 'Over Budget') return pct > 100;
       return true;
     });
-  }, [currentData.categories, filter]);
+  }, [currentCategories, filter]);
 
   // Handlers
   const openSetBudgetModal = () => {
-    setMonthlyBudgetInput(totalBudget.toString());
+    setMonthlyBudgetInput(totalBudget > 0 ? totalBudget.toString() : "");
     setBudgetMonthInput(selectedMonth);
-    setBudgetNotesInput("");
+    setBudgetNotesInput(monthlyBudgetRecord ? (monthlyBudgetRecord.notes || "") : "");
     setIsSetBudgetModalOpen(true);
   };
 
-  const handleSetBudget = () => {
-    const amount = parseFloat(monthlyBudgetInput);
-    if (isNaN(amount) || amount < 0) return;
+  const handleSetBudget = async () => {
+    const amountValue = parseFloat(monthlyBudgetInput);
+    if (isNaN(amountValue) || amountValue <= 0) return;
 
-    setBudgetData(prev => {
-      const monthData = prev[budgetMonthInput] || { categories: [] };
-      return {
-        ...prev,
-        [budgetMonthInput]: {
-          ...monthData,
-          monthlyBudget: amount
-        }
+    try {
+      setActionLoading(true);
+      const budgetMonthStr = `${budgetMonthInput}-01`;
+      
+      const payload = {
+        budget_type: 'monthly',
+        category: null,
+        amount: amountValue,
+        budget_month: budgetMonthStr,
+        notes: budgetNotesInput
       };
-    });
-    setSelectedMonth(budgetMonthInput);
-    setIsSetBudgetModalOpen(false);
+      
+      const existingMonthly = budgets.find(b => b.budget_type === 'monthly' && b.budget_month === budgetMonthStr);
+      
+      if (existingMonthly) {
+        const { error: updateError } = await supabase
+          .from('budgets')
+          .update(payload)
+          .eq('id', existingMonthly.id);
+        if (updateError) {
+          if (updateError.code === '23505') throw new Error("A monthly budget already exists for this month.");
+          throw updateError;
+        }
+      } else {
+        payload.user_id = user.id;
+        const { error: insertError } = await supabase
+          .from('budgets')
+          .insert([payload]);
+        if (insertError) {
+          if (insertError.code === '23505') throw new Error("A monthly budget already exists for this month.");
+          throw insertError;
+        }
+      }
+      setIsSetBudgetModalOpen(false);
+      fetchBudgets();
+      if (budgetMonthInput !== selectedMonth) setSelectedMonth(budgetMonthInput);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Error saving monthly budget.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const openAddCategoryModal = () => {
@@ -144,46 +249,54 @@ const Budget = () => {
     setIsCategoryModalOpen(true);
   };
 
-  const handleSaveCategoryBudget = () => {
-    const amount = parseFloat(categoryBudgetInput);
-    if (isNaN(amount) || amount < 0) return;
+  const handleSaveCategoryBudget = async () => {
+    const amountValue = parseFloat(categoryBudgetInput);
+    if (isNaN(amountValue) || amountValue <= 0) {
+      setCategoryError("Amount must be greater than 0");
+      return;
+    }
+    if (!categoryInput) {
+      setCategoryError("Category is required");
+      return;
+    }
 
-    setBudgetData(prev => {
-      const monthData = prev[selectedMonth] || { monthlyBudget: 0, categories: [] };
-      const categories = [...monthData.categories];
-      
+    try {
+      setActionLoading(true);
+      const payload = {
+        budget_type: 'category',
+        category: categoryInput,
+        amount: amountValue,
+        budget_month: firstDayOfSelectedMonth,
+        notes: null
+      };
+
       if (categoryModalMode === 'add') {
-        if (categories.some(c => c.category === categoryInput)) {
-          setCategoryError("A budget for this category already exists in this month.");
-          return prev;
+        payload.user_id = user.id;
+        const { error: insertError } = await supabase
+          .from('budgets')
+          .insert([payload]);
+        if (insertError) {
+          if (insertError.code === '23505') throw new Error("A budget already exists for this category this month.");
+          throw insertError;
         }
-        categories.push({
-          id: Date.now(),
-          category: categoryInput,
-          budget: amount,
-          spent: 0 // default for now
-        });
       } else {
-        const index = categories.findIndex(c => c.id === editingCategoryId);
-        if (index > -1) {
-          // Check duplicate only if we changed the category name
-          if (categories[index].category !== categoryInput && categories.some(c => c.category === categoryInput)) {
-            setCategoryError("A budget for this category already exists in this month.");
-            return prev;
-          }
-          categories[index] = { ...categories[index], category: categoryInput, budget: amount };
+        const { error: updateError } = await supabase
+          .from('budgets')
+          .update(payload)
+          .eq('id', editingCategoryId);
+        if (updateError) {
+          if (updateError.code === '23505') throw new Error("A budget already exists for this category this month.");
+          throw updateError;
         }
       }
-
       setIsCategoryModalOpen(false);
-      return {
-        ...prev,
-        [selectedMonth]: {
-          ...monthData,
-          categories
-        }
-      };
-    });
+      fetchBudgets();
+    } catch (err) {
+      console.error(err);
+      setCategoryError(err.message || 'Error saving category budget.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const confirmDeleteCategory = (id) => {
@@ -191,19 +304,51 @@ const Budget = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleDeleteCategory = () => {
-    setBudgetData(prev => {
-      const monthData = prev[selectedMonth];
-      return {
-        ...prev,
-        [selectedMonth]: {
-          ...monthData,
-          categories: monthData.categories.filter(c => c.id !== deletingCategoryId)
-        }
-      };
-    });
-    setIsDeleteModalOpen(false);
+  const handleDeleteCategory = async () => {
+    try {
+      setActionLoading(true);
+      const { error: deleteError } = await supabase
+        .from('budgets')
+        .delete()
+        .eq('id', deletingCategoryId);
+      if (deleteError) throw deleteError;
+      setIsDeleteModalOpen(false);
+      fetchBudgets();
+    } catch(err) {
+      console.error(err);
+      alert('Error deleting budget.');
+    } finally {
+      setActionLoading(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading budgets...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans text-center">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-2">
+          <RefreshCcw size={24} className="text-red-500" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900">Oops! Something went wrong</h2>
+        <p className="text-gray-500 font-medium max-w-md">{error}</p>
+        <button 
+          onClick={fetchBudgets}
+          className="mt-4 flex items-center gap-2 bg-gray-900 text-white py-2.5 px-6 rounded-full shadow-sm hover:bg-black transition-all"
+        >
+          <RefreshCcw size={18} strokeWidth={2.5} />
+          <span className="font-bold text-sm">Retry</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto flex flex-col gap-8 pb-10 font-sans">
@@ -233,9 +378,9 @@ const Budget = () => {
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
           >
-            <option value="2025-04">Apr 2025</option>
-            <option value="2025-05">May 2025</option>
-            <option value="2025-06">Jun 2025</option>
+            {monthOptions.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
           </select>
           <ChevronDown size={14} className="text-gray-500 pointer-events-none" strokeWidth={2.5} />
         </button>
@@ -404,9 +549,9 @@ const Budget = () => {
                 value={budgetMonthInput}
                 onChange={(e) => setBudgetMonthInput(e.target.value)}
               >
-                <option value="2025-04">April 2025</option>
-                <option value="2025-05">May 2025</option>
-                <option value="2025-06">June 2025</option>
+                {monthOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -443,9 +588,10 @@ const Budget = () => {
             </button>
             <button 
               onClick={handleSetBudget}
-              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm"
+              disabled={actionLoading}
+              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              Save Budget
+              {actionLoading ? 'Saving...' : 'Save Budget'}
             </button>
           </div>
         </ModalOverlay>
@@ -465,7 +611,7 @@ const Budget = () => {
                 type="text"
                 disabled
                 className="w-full bg-gray-100 border border-gray-200 rounded-xl px-4 py-2.5 text-[14px] font-semibold text-gray-500 cursor-not-allowed"
-                value={selectedMonth === '2025-05' ? 'May 2025' : (selectedMonth === '2025-04' ? 'April 2025' : 'June 2025')}
+                value={monthOptions.find(o => o.value === selectedMonth)?.label || selectedMonth}
               />
             </div>
             <div>
@@ -511,9 +657,10 @@ const Budget = () => {
             </button>
             <button 
               onClick={handleSaveCategoryBudget}
-              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm"
+              disabled={actionLoading}
+              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              {categoryModalMode === 'add' ? 'Add Budget' : 'Save Changes'}
+              {actionLoading ? 'Saving...' : (categoryModalMode === 'add' ? 'Add Budget' : 'Save Changes')}
             </button>
           </div>
         </ModalOverlay>
@@ -538,9 +685,10 @@ const Budget = () => {
             </button>
             <button 
               onClick={handleDeleteCategory}
-              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm"
+              disabled={actionLoading}
+              className="bg-gray-900 text-white px-6 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              Delete
+              {actionLoading ? 'Deleting...' : 'Delete'}
             </button>
           </div>
         </ModalOverlay>

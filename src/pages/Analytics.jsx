@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, ChevronDown, Wallet, CreditCard, PiggyBank,
   BarChart3, Utensils, Plane, ShoppingBag, Zap, Film, Heart, Book, HelpCircle,
@@ -8,86 +8,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, Legend
 } from 'recharts';
-
-const monthlyData = {
-  "2025-05": {
-    received: 57000,
-    expenses: 12500,
-    savings: 15000,
-    categories: [
-      { name: "Food & Dining", amount: 3500, icon: Utensils },
-      { name: "Shopping", amount: 2500, icon: ShoppingBag },
-      { name: "Bills & Utilities", amount: 2000, icon: Zap },
-      { name: "Travel", amount: 1500, icon: Plane },
-      { name: "Entertainment", amount: 1000, icon: Film },
-      { name: "Health", amount: 1000, icon: Heart },
-      { name: "Education", amount: 500, icon: Book },
-      { name: "Other", amount: 500, icon: HelpCircle },
-    ],
-    savingsBreakdown: [
-      { name: "Gold", amount: 6000, icon: Coins },
-      { name: "Fixed Deposit", amount: 4500, icon: Landmark },
-      { name: "Recurring Deposit", amount: 2500, icon: RefreshCcw },
-      { name: "Silver", amount: 2000, icon: Database },
-    ],
-    dailyExpenses: [
-      { date: "May 1", amount: 400 },
-      { date: "May 3", amount: 750 },
-      { date: "May 5", amount: 300 },
-      { date: "May 8", amount: 1200 },
-      { date: "May 12", amount: 650 },
-      { date: "May 15", amount: 900 },
-      { date: "May 18", amount: 500 },
-      { date: "May 22", amount: 1000 },
-      { date: "May 25", amount: 1800 },
-      { date: "May 28", amount: 750 },
-      { date: "May 30", amount: 1200 },
-    ]
-  }
-};
-
-const yearlyData = {
-  "2025": {
-    months: [
-      { name: "Jan", received: 50000, expenses: 20000, savings: 5000 },
-      { name: "Feb", received: 50000, expenses: 18000, savings: 3000 },
-      { name: "Mar", received: 55000, expenses: 25000, savings: 4000 },
-      { name: "Apr", received: 52000, expenses: 21000, savings: 1500 },
-      { name: "May", received: 57000, expenses: 12500, savings: 15000 },
-      { name: "Jun", received: 50000, expenses: 19000, savings: 3000 },
-      { name: "Jul", received: 50000, expenses: 22000, savings: 4000 },
-      { name: "Aug", received: 53000, expenses: 20000, savings: 3000 },
-      { name: "Sep", received: 50000, expenses: 24000, savings: 3000 },
-      { name: "Oct", received: 58000, expenses: 26000, savings: 4000 },
-      { name: "Nov", received: 50000, expenses: 21000, savings: 3000 },
-      { name: "Dec", received: 60000, expenses: 30000, savings: 5000 },
-    ],
-    categories: [
-      { name: "Food & Dining", amount: 42000 },
-      { name: "Shopping", amount: 30000 },
-      { name: "Bills & Utilities", amount: 24000 },
-      { name: "Travel", amount: 18000 },
-      { name: "Entertainment", amount: 12000 },
-      { name: "Health", amount: 12000 },
-      { name: "Education", amount: 6000 },
-      { name: "Other", amount: 6000 },
-    ],
-    savingsGrowth: [
-      { month: "Jan", cumulative: 5000 },
-      { month: "Feb", cumulative: 8000 },
-      { month: "Mar", cumulative: 12000 },
-      { month: "Apr", cumulative: 13500 },
-      { month: "May", cumulative: 15000 },
-      { month: "Jun", cumulative: 18000 },
-      { month: "Jul", cumulative: 22000 },
-      { month: "Aug", cumulative: 25000 },
-      { month: "Sep", cumulative: 28000 },
-      { month: "Oct", cumulative: 32000 },
-      { month: "Nov", cumulative: 35000 },
-      { month: "Dec", cumulative: 40000 },
-    ]
-  }
-};
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const PIE_COLORS = ['#111827', '#374151', '#4B5563', '#6B7280', '#9CA3AF', '#D1D5DB', '#E5E7EB'];
 
@@ -96,7 +18,7 @@ const formatCurrency = (amount) => {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0
-  }).format(amount);
+  }).format(amount || 0);
 };
 
 const SummaryCard = ({ title, amount, Icon }) => (
@@ -122,7 +44,7 @@ const EmptyState = () => (
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-white border border-gray-100 shadow-lg rounded-xl p-3 text-sm">
+      <div className="bg-white border border-gray-100 shadow-lg rounded-xl p-3 text-sm z-50 relative">
         <p className="font-bold text-gray-900 mb-2">{label}</p>
         {payload.map((entry, index) => (
           <div key={index} className="flex items-center gap-2 mb-1 last:mb-0">
@@ -137,28 +59,84 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-const MonthlyOverview = ({ monthKey }) => {
-  const data = monthlyData[monthKey];
-  
-  if (!data) return <EmptyState />;
+const MonthlyOverview = ({ monthKey, rawAmountReceived, rawExpenses, rawSavings }) => {
+  const currentMonthReceived = useMemo(() => rawAmountReceived.filter(r => r.received_date.startsWith(monthKey)), [rawAmountReceived, monthKey]);
+  const currentMonthExpenses = useMemo(() => rawExpenses.filter(e => e.expense_date.startsWith(monthKey)), [rawExpenses, monthKey]);
+  const currentMonthSavings = useMemo(() => rawSavings.filter(s => s.saving_date.startsWith(monthKey)), [rawSavings, monthKey]);
 
-  const availableBalance = data.received - data.expenses - data.savings;
+  const totalReceived = currentMonthReceived.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const totalExpenses = currentMonthExpenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const totalSavings = currentMonthSavings.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const availableBalance = totalReceived - totalExpenses - totalSavings;
+
   const cashFlowData = [
-    { name: 'Amount Received', value: data.received },
-    { name: 'Expenses', value: data.expenses },
-    { name: 'Savings', value: data.savings }
+    { name: 'Amount Received', value: totalReceived },
+    { name: 'Expenses', value: totalExpenses },
+    { name: 'Savings', value: totalSavings }
   ];
 
-  const totalExpenses = data.expenses;
-  const totalSavings = data.savings;
+  const ICONS_MAP = {
+    "Food & Dining": Utensils,
+    "Shopping": ShoppingBag,
+    "Bills & Utilities": Zap,
+    "Travel": Plane,
+    "Entertainment": Film,
+    "Health": Heart,
+    "Education": Book,
+    "Other": HelpCircle
+  };
+
+  const categories = useMemo(() => {
+    const map = {};
+    currentMonthExpenses.forEach(e => {
+      if(!map[e.category]) map[e.category] = 0;
+      map[e.category] += Number(e.amount);
+    });
+    return Object.keys(map).map(cat => ({
+      name: cat,
+      amount: map[cat],
+      icon: ICONS_MAP[cat] || HelpCircle
+    })).sort((a, b) => b.amount - a.amount);
+  }, [currentMonthExpenses]);
+
+  const savingsBreakdown = useMemo(() => {
+    const SAVING_TYPE_MAP = { 'gold': 'Gold', 'silver': 'Silver', 'fixed_deposit': 'Fixed Deposit', 'recurring_deposit': 'Recurring Deposit' };
+    const SAVINGS_ICON_MAP = { 'gold': Coins, 'silver': Database, 'fixed_deposit': Landmark, 'recurring_deposit': RefreshCcw };
+    
+    const map = {};
+    currentMonthSavings.forEach(s => {
+      const key = SAVING_TYPE_MAP[s.saving_type] || s.saving_type;
+      if(!map[key]) map[key] = { amount: 0, icon: SAVINGS_ICON_MAP[s.saving_type] || Coins, name: key };
+      map[key].amount += Number(s.amount);
+    });
+    return Object.values(map).sort((a, b) => b.amount - a.amount);
+  }, [currentMonthSavings]);
+
+  const dailyExpenses = useMemo(() => {
+    const map = {};
+    currentMonthExpenses.forEach(e => {
+      const d = parseInt(e.expense_date.split('-')[2], 10);
+      if(!map[d]) map[d] = 0;
+      map[d] += Number(e.amount);
+    });
+    const monthName = new Date(`${monthKey}-01`).toLocaleString('default', { month: 'short' });
+    return Object.keys(map)
+      .map(Number)
+      .sort((a,b) => a-b)
+      .map(day => ({ date: `${monthName} ${day}`, amount: map[day] }));
+  }, [currentMonthExpenses, monthKey]);
+
+  if (totalReceived === 0 && totalExpenses === 0 && totalSavings === 0) {
+    return <EmptyState />;
+  }
 
   return (
     <div className="flex flex-col gap-8">
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <SummaryCard title="Amount Received" amount={formatCurrency(data.received)} Icon={Wallet} />
-        <SummaryCard title="Total Expenses" amount={formatCurrency(data.expenses)} Icon={CreditCard} />
-        <SummaryCard title="Total Savings" amount={formatCurrency(data.savings)} Icon={PiggyBank} />
+        <SummaryCard title="Amount Received" amount={formatCurrency(totalReceived)} Icon={Wallet} />
+        <SummaryCard title="Total Expenses" amount={formatCurrency(totalExpenses)} Icon={CreditCard} />
+        <SummaryCard title="Total Savings" amount={formatCurrency(totalSavings)} Icon={PiggyBank} />
         <SummaryCard title="Available Balance" amount={formatCurrency(availableBalance)} Icon={Wallet} />
       </div>
 
@@ -186,6 +164,7 @@ const MonthlyOverview = ({ monthKey }) => {
       </div>
 
       {/* Expense Breakdown & Rankings */}
+      {totalExpenses > 0 && (
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="flex-[1] bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-6">Expense by Category</h2>
@@ -193,7 +172,7 @@ const MonthlyOverview = ({ monthKey }) => {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={data.categories}
+                  data={categories}
                   cx="50%"
                   cy="50%"
                   innerRadius={70}
@@ -202,7 +181,7 @@ const MonthlyOverview = ({ monthKey }) => {
                   dataKey="amount"
                   stroke="none"
                 >
-                  {data.categories.map((entry, index) => (
+                  {categories.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                   ))}
                 </Pie>
@@ -216,7 +195,7 @@ const MonthlyOverview = ({ monthKey }) => {
           </div>
           {/* Simple Legend */}
           <div className="flex flex-wrap justify-center gap-3 mt-4">
-            {data.categories.slice(0,4).map((cat, i) => (
+            {categories.slice(0,4).map((cat, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
                 <span className="text-[12px] font-medium text-gray-600">{cat.name}</span>
@@ -228,9 +207,9 @@ const MonthlyOverview = ({ monthKey }) => {
         <div className="flex-[1] bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm flex flex-col">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-6">Top Spending Categories</h2>
           <div className="flex-1 flex flex-col gap-4">
-            {data.categories.slice(0, 5).map((cat, index) => {
+            {categories.slice(0, 5).map((cat, index) => {
               const Icon = cat.icon;
-              const percentage = Math.round((cat.amount / totalExpenses) * 100);
+              const percentage = Math.round((cat.amount / totalExpenses) * 100) || 0;
               return (
                 <div key={index} className="flex items-center gap-4">
                   <div className="w-5 text-sm font-bold text-gray-400 text-right">{index + 1}</div>
@@ -252,8 +231,10 @@ const MonthlyOverview = ({ monthKey }) => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Savings Analytics */}
+      {totalSavings > 0 && (
       <div className="bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm">
         <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-6">Savings Distribution</h2>
         <div className="flex flex-col md:flex-row items-center gap-8">
@@ -261,7 +242,7 @@ const MonthlyOverview = ({ monthKey }) => {
              <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={data.savingsBreakdown}
+                  data={savingsBreakdown}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
@@ -270,7 +251,7 @@ const MonthlyOverview = ({ monthKey }) => {
                   dataKey="amount"
                   stroke="none"
                 >
-                  {data.savingsBreakdown.map((entry, index) => (
+                  {savingsBreakdown.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                   ))}
                 </Pie>
@@ -284,9 +265,9 @@ const MonthlyOverview = ({ monthKey }) => {
               <h3 className="text-3xl font-bold text-gray-900 tracking-tight">{formatCurrency(totalSavings)}</h3>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {data.savingsBreakdown.map((item, index) => {
+              {savingsBreakdown.map((item, index) => {
                 const Icon = item.icon;
-                const percentage = Math.round((item.amount / totalSavings) * 100);
+                const percentage = Math.round((item.amount / totalSavings) * 100) || 0;
                 return (
                   <div key={index} className="flex items-center gap-3 bg-gray-50/50 p-3 rounded-xl border border-gray-50 hover:border-gray-100 transition-colors">
                     <div className="bg-white w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-gray-100">
@@ -303,8 +284,10 @@ const MonthlyOverview = ({ monthKey }) => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Spending Trend */}
+      {dailyExpenses.length > 0 && (
       <div className="bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm">
         <div className="mb-6 md:mb-8">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Spending Trend</h2>
@@ -312,7 +295,7 @@ const MonthlyOverview = ({ monthKey }) => {
         </div>
         <div className="h-[300px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data.dailyExpenses} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+            <LineChart data={dailyExpenses} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
               <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12, fontWeight: 500 }} dy={10} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12 }} tickFormatter={(val) => `₹${val}`} />
@@ -322,19 +305,54 @@ const MonthlyOverview = ({ monthKey }) => {
           </ResponsiveContainer>
         </div>
       </div>
+      )}
     </div>
   );
 };
 
-const YearlyOverview = ({ yearKey }) => {
-  const data = yearlyData[yearKey];
-  
-  if (!data) return <EmptyState />;
+const YearlyOverview = ({ yearKey, rawAmountReceived, rawExpenses, rawSavings }) => {
+  const currentYearReceived = useMemo(() => rawAmountReceived.filter(r => r.received_date.startsWith(yearKey)), [rawAmountReceived, yearKey]);
+  const currentYearExpenses = useMemo(() => rawExpenses.filter(e => e.expense_date.startsWith(yearKey)), [rawExpenses, yearKey]);
+  const currentYearSavings = useMemo(() => rawSavings.filter(s => s.saving_date.startsWith(yearKey)), [rawSavings, yearKey]);
 
-  const totalReceived = data.months.reduce((acc, m) => acc + m.received, 0);
-  const totalExpenses = data.months.reduce((acc, m) => acc + m.expenses, 0);
-  const totalSavings = data.months.reduce((acc, m) => acc + m.savings, 0);
+  const totalReceived = currentYearReceived.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const totalExpenses = currentYearExpenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const totalSavings = currentYearSavings.reduce((acc, curr) => acc + Number(curr.amount), 0);
   const netBalance = totalReceived - totalExpenses - totalSavings;
+
+  const months = useMemo(() => {
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return monthNames.map((name, index) => {
+      const prefix = `${yearKey}-${String(index + 1).padStart(2, '0')}`;
+      return {
+        name,
+        received: currentYearReceived.filter(r => r.received_date.startsWith(prefix)).reduce((acc, curr) => acc + Number(curr.amount), 0),
+        expenses: currentYearExpenses.filter(e => e.expense_date.startsWith(prefix)).reduce((acc, curr) => acc + Number(curr.amount), 0),
+        savings: currentYearSavings.filter(s => s.saving_date.startsWith(prefix)).reduce((acc, curr) => acc + Number(curr.amount), 0),
+      };
+    });
+  }, [currentYearReceived, currentYearExpenses, currentYearSavings, yearKey]);
+
+  const categories = useMemo(() => {
+    const map = {};
+    currentYearExpenses.forEach(e => {
+      if(!map[e.category]) map[e.category] = 0;
+      map[e.category] += Number(e.amount);
+    });
+    return Object.keys(map).map(name => ({ name, amount: map[name] })).sort((a, b) => b.amount - a.amount);
+  }, [currentYearExpenses]);
+
+  const savingsGrowth = useMemo(() => {
+    let cumulative = 0;
+    return months.map(m => {
+      cumulative += m.savings;
+      return { month: m.name, cumulative };
+    });
+  }, [months]);
+
+  if (totalReceived === 0 && totalExpenses === 0 && totalSavings === 0) {
+    return <EmptyState />;
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -354,7 +372,7 @@ const YearlyOverview = ({ yearKey }) => {
         </div>
         <div className="h-[350px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data.months} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+            <BarChart data={months} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
               <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12, fontWeight: 500 }} dy={10} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12 }} tickFormatter={(val) => `₹${val/1000}k`} />
@@ -369,11 +387,12 @@ const YearlyOverview = ({ yearKey }) => {
       </div>
 
       {/* Yearly Expense Breakdown */}
+      {categories.length > 0 && (
       <div className="bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm">
         <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-6">Yearly Expense Breakdown</h2>
         <div className="h-[350px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data.categories} layout="vertical" margin={{ top: 10, right: 30, left: 40, bottom: 0 }}>
+            <BarChart data={categories} layout="vertical" margin={{ top: 10, right: 30, left: 40, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E5E7EB" />
               <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12 }} tickFormatter={(val) => `₹${val/1000}k`} />
               <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: '#4B5563', fontSize: 12, fontWeight: 500 }} width={120} />
@@ -383,13 +402,15 @@ const YearlyOverview = ({ yearKey }) => {
           </ResponsiveContainer>
         </div>
       </div>
+      )}
 
       {/* Yearly Savings Growth */}
+      {totalSavings > 0 && (
       <div className="bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm">
         <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-6">Yearly Savings Growth</h2>
         <div className="h-[300px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data.savingsGrowth} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+            <AreaChart data={savingsGrowth} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
               <defs>
                 <linearGradient id="colorSavings" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#111827" stopOpacity={0.15}/>
@@ -405,14 +426,91 @@ const YearlyOverview = ({ yearKey }) => {
           </ResponsiveContainer>
         </div>
       </div>
+      )}
     </div>
   );
 };
 
 const Analytics = () => {
+  const { user } = useAuth();
   const [period, setPeriod] = useState('Monthly');
-  const [selectedMonth, setSelectedMonth] = useState('2025-05');
-  const [selectedYear, setSelectedYear] = useState('2025');
+  
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  
+  const [selectedYear, setSelectedYear] = useState(() => {
+    return new Date().getFullYear().toString();
+  });
+
+  const [rawAmountReceived, setRawAmountReceived] = useState([]);
+  const [rawExpenses, setRawExpenses] = useState([]);
+  const [rawSavings, setRawSavings] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchAnalyticsData = async () => {
+    if (!user) return;
+    try {
+      setIsLoading(true);
+      setError(null);
+      const [
+        { data: aData, error: aError },
+        { data: eData, error: eError },
+        { data: sData, error: sError }
+      ] = await Promise.all([
+        supabase.from('amount_received').select('*'),
+        supabase.from('expenses').select('*'),
+        supabase.from('savings').select('*')
+      ]);
+
+      if (aError) throw aError;
+      if (eError) throw eError;
+      if (sError) throw sError;
+      
+      setRawAmountReceived(aData || []);
+      setRawExpenses(eData || []);
+      setRawSavings(sData || []);
+    } catch (err) {
+      console.error(err);
+      setError('Unable to load your analytics. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAnalyticsData();
+  }, [user]);
+
+  if (isLoading) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin"></div>
+        <p className="text-gray-500 font-medium">Loading analytics...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-[1400px] mx-auto flex flex-col items-center justify-center min-h-[60vh] gap-4 font-sans text-center">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-2">
+          <RefreshCcw size={24} className="text-red-500" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900">Oops! Something went wrong</h2>
+        <p className="text-gray-500 font-medium max-w-md">{error}</p>
+        <button 
+          onClick={fetchAnalyticsData}
+          className="mt-4 flex items-center gap-2 bg-gray-900 text-white py-2.5 px-6 rounded-full shadow-sm hover:bg-black transition-all"
+        >
+          <RefreshCcw size={18} strokeWidth={2.5} />
+          <span className="font-bold text-sm">Retry</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto flex flex-col gap-8 pb-10 font-sans">
@@ -446,19 +544,40 @@ const Analytics = () => {
           {period === 'Monthly' ? 'Monthly Overview' : 'Yearly Overview'}
         </h2>
         
-        <button className="flex items-center gap-2.5 bg-white border border-gray-200 py-2 px-4 rounded-full shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-all w-max h-max">
-          <Calendar size={16} className="text-gray-600" strokeWidth={2.5} />
-          <span className="text-[13px] font-bold text-gray-900">
-            {period === 'Monthly' ? 'May 2025' : '2025'}
-          </span>
-          <ChevronDown size={14} className="text-gray-500" strokeWidth={2.5} />
-        </button>
+        {period === 'Monthly' ? (
+          <input 
+            type="month"
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(e.target.value)}
+            className="bg-white border border-gray-200 py-2 px-4 rounded-full shadow-sm text-[13px] font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 w-max cursor-pointer"
+          />
+        ) : (
+          <select
+            value={selectedYear}
+            onChange={e => setSelectedYear(e.target.value)}
+            className="bg-white border border-gray-200 py-2 px-4 rounded-full shadow-sm text-[13px] font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 w-max cursor-pointer"
+          >
+            {[2023, 2024, 2025, 2026, 2027].map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {period === 'Monthly' ? (
-        <MonthlyOverview monthKey={selectedMonth} />
+        <MonthlyOverview 
+          monthKey={selectedMonth} 
+          rawAmountReceived={rawAmountReceived}
+          rawExpenses={rawExpenses}
+          rawSavings={rawSavings}
+        />
       ) : (
-        <YearlyOverview yearKey={selectedYear} />
+        <YearlyOverview 
+          yearKey={selectedYear} 
+          rawAmountReceived={rawAmountReceived}
+          rawExpenses={rawExpenses}
+          rawSavings={rawSavings}
+        />
       )}
 
     </div>
