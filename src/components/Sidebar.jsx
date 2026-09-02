@@ -16,12 +16,16 @@ import {
   User, 
   ChevronRight,
   ChevronDown,
-  X
+  X,
+  LogOut
 } from 'lucide-react';
+
+import { useAuth } from '../context/AuthContext';
 
 const Sidebar = ({ onClose }) => {
   const [isSavingsExpanded, setIsSavingsExpanded] = useState(false);
   const navigate = useNavigate();
+  const { user, signOut } = useAuth();
 
   const navItems = [
     { name: 'Dashboard', path: '/', icon: House },
@@ -149,16 +153,29 @@ const Sidebar = ({ onClose }) => {
       {/* Bottom Profile */}
       <div className="p-4 mt-auto">
         <div className="flex items-center justify-between p-3 bg-[#17171a] rounded-2xl border border-[#222225] cursor-pointer hover:bg-[#1f1f22] transition-colors shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="bg-[#2a2a2d] p-2 rounded-full text-gray-200">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="bg-[#2a2a2d] p-2 rounded-full text-gray-200 flex-shrink-0">
               <User size={18} strokeWidth={2.5} />
             </div>
-            <div>
-              <p className="text-sm font-semibold text-white leading-tight">Hi, User</p>
-              <p className="text-[11px] font-medium text-gray-400 mt-0.5">Manage your account</p>
+            <div className="overflow-hidden">
+              <p className="text-sm font-semibold text-white leading-tight truncate">
+                {user?.user_metadata?.full_name || user?.email || 'User'}
+              </p>
+              <p className="text-[11px] font-medium text-gray-400 mt-0.5 truncate">
+                {user?.email || 'Manage account'}
+              </p>
             </div>
           </div>
-          <ChevronRight size={16} className="text-gray-500" />
+          <button 
+            onClick={async (e) => {
+              e.stopPropagation();
+              await signOut();
+            }}
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-[#2a2a2d] rounded-lg transition-colors flex-shrink-0"
+            title="Sign out"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
       </div>
     </div>

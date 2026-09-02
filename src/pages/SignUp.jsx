@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { 
   Wallet, 
   Mail, 
@@ -21,10 +22,44 @@ const SignUp = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreeTerms, setAgreeTerms] = useState(false);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
-  const handleSubmit = (e) => {
+  const { signUp } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Sign Up Data:', { fullName, email, password, confirmPassword, agreeTerms });
+    setError(null);
+    setSuccess(false);
+
+    if (password !== confirmPassword) {
+      return setError("Passwords do not match");
+    }
+    if (password.length < 6) {
+      return setError("Password must be at least 6 characters");
+    }
+    
+    setLoading(true);
+    
+    try {
+      const { data, error } = await signUp(email, password, fullName);
+      if (error) throw error;
+      
+      setSuccess(true);
+      if (!data?.session) {
+        setSuccessMessage("Please check your email to confirm your account.");
+      } else {
+        setSuccessMessage("Account created successfully! Redirecting...");
+        setTimeout(() => navigate('/login'), 2000);
+      }
+    } catch (err) {
+      setError(err.message || "Failed to create an account.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -211,17 +246,30 @@ const SignUp = () => {
               </label>
             </div>
 
+            {error && (
+              <div className="bg-red-50 text-red-600 text-sm p-3 rounded-xl border border-red-100 font-medium">
+                {error}
+              </div>
+            )}
+            
+            {success && (
+              <div className="bg-green-50 text-green-700 text-sm p-3 rounded-xl border border-green-100 font-medium">
+                {successMessage}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full bg-black text-white py-3 rounded-xl font-semibold text-sm hover:bg-gray-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm border border-black mt-2"
+              disabled={loading || success}
+              className={`w-full bg-black text-white py-3 rounded-xl font-semibold text-sm hover:bg-gray-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm border border-black mt-2 ${loading || success ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
-              Create Account
+              {loading ? 'Creating Account...' : 'Create Account'}
             </button>
           </form>
 
           <p className="mt-8 text-center text-sm font-medium text-gray-600">
             Already have an account?{' '}
-            <Link to="/signin" className="text-black font-bold hover:underline">
+            <Link to="/login" className="text-black font-bold hover:underline">
               Sign In
             </Link>
           </p>
