@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 // --- Constants ---
 
@@ -42,9 +43,7 @@ const formatDateDisplay = (dateString) => {
   return date.toLocaleDateString('en-GB', { ...options, timeZone: 'UTC' }); 
 };
 
-const formatCurrency = (amount) => {
-  return '₹' + Number(amount || 0).toLocaleString('en-IN');
-};
+
 
 const getSavingsAmount = (item) => {
   return Number(item.amount || 0);

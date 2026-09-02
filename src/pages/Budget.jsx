@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 const CATEGORIES = [
   { name: "Food & Dining", icon: Utensils },
@@ -20,13 +21,6 @@ const CATEGORIES = [
 
 
 
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 0
-  }).format(amount);
-};
 
 const SummaryCard = ({ title, amount, Icon }) => (
   <div className="bg-white p-6 rounded-[24px] border border-gray-100 shadow-sm flex flex-col h-full">
@@ -143,7 +137,7 @@ const Budget = () => {
     });
   }, [expenses, selectedMonth]);
 
-  const totalSpent = currentMonthExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const totalSpent = currentMonthExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   const remainingBudget = totalBudget - totalSpent;
   const overallPercentage = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0;
   const isOverBudget = totalSpent > totalBudget;
@@ -154,7 +148,7 @@ const Budget = () => {
       .map(b => {
         const catSpent = currentMonthExpenses
           .filter(e => e.category === b.category)
-          .reduce((sum, e) => sum + Number(e.amount), 0);
+          .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
         return {
           id: b.id,
           category: b.category,

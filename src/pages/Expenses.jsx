@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 // --- Constants ---
 
@@ -33,10 +34,7 @@ const formatDateDisplay = (dateString) => {
   return date.toLocaleDateString('en-GB', { ...options, timeZone: 'UTC' }); 
 };
 
-const formatCurrency = (amount) => {
-  if (amount === undefined || amount === null) return '₹0';
-  return '₹' + Number(amount).toLocaleString('en-IN');
-};
+
 
 const isCurrentMonth = (dateString) => {
   if (!dateString) return false;
@@ -124,11 +122,11 @@ const Expenses = () => {
 
   // Derived State (Summaries)
   const totalExpenses = useMemo(() => 
-    expenses.reduce((sum, exp) => sum + Number(exp.amount), 0)
+    expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0)
   , [expenses]);
 
   const thisMonthExpenses = useMemo(() => 
-    expenses.filter(exp => isCurrentMonth(exp.expense_date)).reduce((sum, exp) => sum + Number(exp.amount), 0)
+    expenses.filter(exp => isCurrentMonth(exp.expense_date)).reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0)
   , [expenses]);
 
   const numberOfExpenses = expenses.length;

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 // --- Constants ---
 const SOURCE_ICONS = {
@@ -27,9 +28,7 @@ const formatDateDisplay = (dateString) => {
   return date.toLocaleDateString('en-GB', { ...options, timeZone: 'UTC' }); 
 };
 
-const formatCurrency = (amount) => {
-  return '₹' + Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
+
 
 const isCurrentMonth = (dateString) => {
   if (!dateString) return false;
@@ -117,11 +116,11 @@ const AmountReceived = () => {
 
   // Derived State (Summaries)
   const totalAmount = useMemo(() => 
-    records.reduce((sum, rec) => sum + Number(rec.amount), 0)
+    records.reduce((sum, rec) => sum + (Number(rec.amount) || 0), 0)
   , [records]);
 
   const thisMonthAmount = useMemo(() => 
-    records.filter(rec => isCurrentMonth(rec.received_date)).reduce((sum, rec) => sum + Number(rec.amount), 0)
+    records.filter(rec => isCurrentMonth(rec.received_date)).reduce((sum, rec) => sum + (Number(rec.amount) || 0), 0)
   , [records]);
 
   const numberOfRecords = records.length;

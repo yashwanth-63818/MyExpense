@@ -9,11 +9,9 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 // Helper Functions
-const formatCurrency = (amount) => {
-  return '₹' + Number(amount || 0).toLocaleString('en-IN');
-};
 
 const formatDateDisplay = (dateString) => {
   if (!dateString) return '-';
@@ -125,16 +123,16 @@ const Dashboard = () => {
   }, [user]);
 
   // Calculations
-  const totalReceived = useMemo(() => amountReceived.reduce((sum, item) => sum + Number(item.amount), 0), [amountReceived]);
-  const totalExpenses = useMemo(() => expenses.reduce((sum, item) => sum + Number(item.amount), 0), [expenses]);
-  const totalSavings = useMemo(() => savings.reduce((sum, item) => sum + Number(item.amount), 0), [savings]);
+  const totalReceived = useMemo(() => amountReceived.reduce((sum, item) => sum + (Number(item.amount) || 0), 0), [amountReceived]);
+  const totalExpenses = useMemo(() => expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0), [expenses]);
+  const totalSavings = useMemo(() => savings.reduce((sum, item) => sum + (Number(item.amount) || 0), 0), [savings]);
   const availableBalance = totalReceived - totalExpenses - totalSavings;
 
   const savingsBreakdown = useMemo(() => {
     const breakdown = { gold: 0, silver: 0, fixed_deposit: 0, recurring_deposit: 0 };
     savings.forEach(s => {
       if (breakdown[s.saving_type] !== undefined) {
-        breakdown[s.saving_type] += Number(s.amount);
+        breakdown[s.saving_type] += (Number(s.amount) || 0);
       }
     });
     return breakdown;
@@ -152,7 +150,7 @@ const Dashboard = () => {
       type: 'Amount Received',
       category: r.source,
       amount: `+ ${formatCurrency(r.amount)}`,
-      rawAmount: Number(r.amount),
+      rawAmount: Number(r.amount) || 0,
       date: r.received_date,
       createdAt: r.created_at,
       iconDirection: 'down'
@@ -162,7 +160,7 @@ const Dashboard = () => {
       type: 'Expense',
       category: e.category,
       amount: `- ${formatCurrency(e.amount)}`,
-      rawAmount: Number(e.amount),
+      rawAmount: Number(e.amount) || 0,
       date: e.expense_date,
       createdAt: e.created_at,
       iconDirection: 'up'
@@ -174,7 +172,7 @@ const Dashboard = () => {
         type: 'Savings',
         category: displayType,
         amount: `- ${formatCurrency(s.amount)}`,
-        rawAmount: Number(s.amount),
+        rawAmount: Number(s.amount) || 0,
         date: s.saving_date,
         createdAt: s.created_at,
         iconDirection: 'down'

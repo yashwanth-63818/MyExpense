@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 const SAVING_TYPE_MAP = {
   'gold': 'Gold',
@@ -28,9 +29,7 @@ const formatDateDisplay = (dateString) => {
   return date.toLocaleDateString('en-GB', { ...options, timeZone: 'UTC' }); 
 };
 
-const formatCurrency = (amount) => {
-  return '₹' + Number(amount || 0).toLocaleString('en-IN');
-};
+
 
 const isToday = (dateString) => {
   const d = new Date(dateString);
@@ -140,7 +139,7 @@ const Transactions = () => {
           title: record.source,
           category: 'Amount Received',
           description: record.description || record.source,
-          amount: Number(record.amount),
+          amount: Number(record.amount) || 0,
           date: record.received_date,
           createdAt: record.created_at
         });
@@ -155,7 +154,7 @@ const Transactions = () => {
           title: record.category,
           category: 'Expense',
           description: record.description || record.category,
-          amount: Number(record.amount),
+          amount: Number(record.amount) || 0,
           date: record.expense_date,
           createdAt: record.created_at
         });
@@ -170,7 +169,7 @@ const Transactions = () => {
           title: SAVING_TYPE_MAP[record.saving_type] || record.saving_type,
           category: 'Savings',
           description: record.description || SAVING_TYPE_MAP[record.saving_type] || record.saving_type,
-          amount: Number(record.amount),
+          amount: Number(record.amount) || 0,
           date: record.saving_date,
           createdAt: record.created_at
         });

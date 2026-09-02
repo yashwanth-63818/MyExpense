@@ -10,16 +10,9 @@ import {
 } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatCurrency } from '../utils/currency';
 
 const PIE_COLORS = ['#111827', '#374151', '#4B5563', '#6B7280', '#9CA3AF', '#D1D5DB', '#E5E7EB'];
-
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 0
-  }).format(amount || 0);
-};
 
 const SummaryCard = ({ title, amount, Icon }) => (
   <div className="bg-white p-6 rounded-[24px] border border-gray-100 shadow-sm flex flex-col">
@@ -64,9 +57,9 @@ const MonthlyOverview = ({ monthKey, rawAmountReceived, rawExpenses, rawSavings 
   const currentMonthExpenses = useMemo(() => rawExpenses.filter(e => e.expense_date.startsWith(monthKey)), [rawExpenses, monthKey]);
   const currentMonthSavings = useMemo(() => rawSavings.filter(s => s.saving_date.startsWith(monthKey)), [rawSavings, monthKey]);
 
-  const totalReceived = currentMonthReceived.reduce((acc, curr) => acc + Number(curr.amount), 0);
-  const totalExpenses = currentMonthExpenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
-  const totalSavings = currentMonthSavings.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const totalReceived = currentMonthReceived.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const totalExpenses = currentMonthExpenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const totalSavings = currentMonthSavings.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
   const availableBalance = totalReceived - totalExpenses - totalSavings;
 
   const cashFlowData = [
@@ -90,7 +83,7 @@ const MonthlyOverview = ({ monthKey, rawAmountReceived, rawExpenses, rawSavings 
     const map = {};
     currentMonthExpenses.forEach(e => {
       if(!map[e.category]) map[e.category] = 0;
-      map[e.category] += Number(e.amount);
+      map[e.category] += (Number(e.amount) || 0);
     });
     return Object.keys(map).map(cat => ({
       name: cat,
@@ -107,7 +100,7 @@ const MonthlyOverview = ({ monthKey, rawAmountReceived, rawExpenses, rawSavings 
     currentMonthSavings.forEach(s => {
       const key = SAVING_TYPE_MAP[s.saving_type] || s.saving_type;
       if(!map[key]) map[key] = { amount: 0, icon: SAVINGS_ICON_MAP[s.saving_type] || Coins, name: key };
-      map[key].amount += Number(s.amount);
+      map[key].amount += (Number(s.amount) || 0);
     });
     return Object.values(map).sort((a, b) => b.amount - a.amount);
   }, [currentMonthSavings]);
@@ -117,7 +110,7 @@ const MonthlyOverview = ({ monthKey, rawAmountReceived, rawExpenses, rawSavings 
     currentMonthExpenses.forEach(e => {
       const d = parseInt(e.expense_date.split('-')[2], 10);
       if(!map[d]) map[d] = 0;
-      map[d] += Number(e.amount);
+      map[d] += (Number(e.amount) || 0);
     });
     const monthName = new Date(`${monthKey}-01`).toLocaleString('default', { month: 'short' });
     return Object.keys(map)
@@ -315,9 +308,9 @@ const YearlyOverview = ({ yearKey, rawAmountReceived, rawExpenses, rawSavings })
   const currentYearExpenses = useMemo(() => rawExpenses.filter(e => e.expense_date.startsWith(yearKey)), [rawExpenses, yearKey]);
   const currentYearSavings = useMemo(() => rawSavings.filter(s => s.saving_date.startsWith(yearKey)), [rawSavings, yearKey]);
 
-  const totalReceived = currentYearReceived.reduce((acc, curr) => acc + Number(curr.amount), 0);
-  const totalExpenses = currentYearExpenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
-  const totalSavings = currentYearSavings.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  const totalReceived = currentYearReceived.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const totalExpenses = currentYearExpenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const totalSavings = currentYearSavings.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
   const netBalance = totalReceived - totalExpenses - totalSavings;
 
   const months = useMemo(() => {
@@ -326,9 +319,9 @@ const YearlyOverview = ({ yearKey, rawAmountReceived, rawExpenses, rawSavings })
       const prefix = `${yearKey}-${String(index + 1).padStart(2, '0')}`;
       return {
         name,
-        received: currentYearReceived.filter(r => r.received_date.startsWith(prefix)).reduce((acc, curr) => acc + Number(curr.amount), 0),
-        expenses: currentYearExpenses.filter(e => e.expense_date.startsWith(prefix)).reduce((acc, curr) => acc + Number(curr.amount), 0),
-        savings: currentYearSavings.filter(s => s.saving_date.startsWith(prefix)).reduce((acc, curr) => acc + Number(curr.amount), 0),
+        received: currentYearReceived.filter(r => r.received_date.startsWith(prefix)).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0),
+        expenses: currentYearExpenses.filter(e => e.expense_date.startsWith(prefix)).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0),
+        savings: currentYearSavings.filter(s => s.saving_date.startsWith(prefix)).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0),
       };
     });
   }, [currentYearReceived, currentYearExpenses, currentYearSavings, yearKey]);
@@ -337,7 +330,7 @@ const YearlyOverview = ({ yearKey, rawAmountReceived, rawExpenses, rawSavings })
     const map = {};
     currentYearExpenses.forEach(e => {
       if(!map[e.category]) map[e.category] = 0;
-      map[e.category] += Number(e.amount);
+      map[e.category] += (Number(e.amount) || 0);
     });
     return Object.keys(map).map(name => ({ name, amount: map[name] })).sort((a, b) => b.amount - a.amount);
   }, [currentYearExpenses]);
