@@ -3,6 +3,8 @@ import {
   User, Mail, ChevronDown, Check, Download, 
   Trash2, AlertTriangle, X
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const Toast = ({ message, visible, onClose }) => {
   if (!visible) return null;
@@ -48,12 +50,16 @@ const SettingsCard = ({ title, subtext, children, className = "" }) => (
   </div>
 );
 
-const DEFAULT_PROFILE = { name: "Yash", email: "yash@example.com" };
 const DEFAULT_NOTIFS = { reminders: true, budget: true, savings: false };
 
 const Settings = () => {
+  const { user } = useAuth();
+  
+  const userEmail = user?.email || "";
+  const fallbackName = userEmail.split('@')[0];
+  const userName = user?.user_metadata?.full_name || user?.user_metadata?.name || fallbackName;
+
   // State
-  const [profile, setProfile] = useState(() => JSON.parse(localStorage.getItem('myexpense_profile')) || DEFAULT_PROFILE);
   const [currency, setCurrency] = useState(() => localStorage.getItem('myexpense_currency') || 'Indian Rupee (₹)');
   const [dateFormat, setDateFormat] = useState(() => localStorage.getItem('myexpense_date_format') || 'DD/MM/YYYY');
   const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('myexpense_notifications')) || DEFAULT_NOTIFS);
@@ -80,7 +86,6 @@ const Settings = () => {
   };
 
   // Effects to persist state
-  useEffect(() => { localStorage.setItem('myexpense_profile', JSON.stringify(profile)); }, [profile]);
   useEffect(() => { localStorage.setItem('myexpense_currency', currency); }, [currency]);
   useEffect(() => { localStorage.setItem('myexpense_date_format', dateFormat); }, [dateFormat]);
   useEffect(() => { localStorage.setItem('myexpense_notifications', JSON.stringify(notifications)); }, [notifications]);
@@ -95,15 +100,27 @@ const Settings = () => {
   }, [theme]);
 
   // Handlers
-  const handleSaveProfile = () => {
-    setProfile({ name: editName, email: editEmail });
-    setIsEditProfileOpen(false);
-    triggerToast("Profile updated");
+  const handleSaveProfile = async () => {
+    try {
+      const updates = { data: { full_name: editName, name: editName } };
+      if (editEmail !== userEmail) {
+        updates.email = editEmail;
+      }
+      
+      const { error } = await supabase.auth.updateUser(updates);
+      if (error) throw error;
+      
+      setIsEditProfileOpen(false);
+      triggerToast("Profile updated");
+    } catch (err) {
+      triggerToast(err.message || "Failed to update profile");
+    }
   };
 
   const handleExportData = () => {
     const data = {
-      profile, currency, dateFormat, notifications, theme,
+      profile: { name: userName, email: userEmail },
+      currency, dateFormat, notifications, theme,
       exportDate: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -119,13 +136,11 @@ const Settings = () => {
   };
 
   const handleClearData = () => {
-    localStorage.removeItem('myexpense_profile');
     localStorage.removeItem('myexpense_currency');
     localStorage.removeItem('myexpense_date_format');
     localStorage.removeItem('myexpense_notifications');
     localStorage.removeItem('myexpense_theme');
     
-    setProfile(DEFAULT_PROFILE);
     setCurrency('Indian Rupee (₹)');
     setDateFormat('DD/MM/YYYY');
     setNotifications(DEFAULT_NOTIFS);
@@ -160,14 +175,14 @@ const Settings = () => {
                 <User size={32} />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900">{profile.name}</h3>
-                <p className="text-sm font-medium text-gray-500">{profile.email}</p>
+                <h3 className="text-lg font-bold text-gray-900">{userName}</h3>
+                <p className="text-sm font-medium text-gray-500">{userEmail}</p>
               </div>
             </div>
             <button 
               onClick={() => {
-                setEditName(profile.name);
-                setEditEmail(profile.email);
+                setEditName(userName);
+                setEditEmail(userEmail);
                 setIsEditProfileOpen(true);
               }}
               className="bg-gray-50 border border-gray-200 text-gray-900 px-5 py-2.5 rounded-full text-[13px] font-bold hover:bg-gray-100 transition-colors shadow-sm w-max"
