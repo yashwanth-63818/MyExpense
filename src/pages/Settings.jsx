@@ -171,8 +171,12 @@ const Settings = () => {
         <SettingsCard title="Profile" subtext="Manage your personal information.">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
             <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 border border-gray-200">
-                <User size={32} />
+              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 border border-gray-200 overflow-hidden">
+                {user?.user_metadata?.avatar_url || user?.user_metadata?.picture ? (
+                  <img src={user?.user_metadata?.avatar_url || user?.user_metadata?.picture} alt={userName} className="w-full h-full object-cover" />
+                ) : (
+                  <User size={32} />
+                )}
               </div>
               <div>
                 <h3 className="text-lg font-bold text-gray-900">{userName}</h3>
